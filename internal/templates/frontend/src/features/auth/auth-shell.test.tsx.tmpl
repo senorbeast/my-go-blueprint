@@ -1,0 +1,11 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
+import { AuthShell } from "./auth-shell";
+
+afterEach(() => vi.restoreAllMocks());
+test("shows the authenticated user", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "u1", email: "owner@example.test" }), { status: 200 }));
+  render(<QueryClientProvider client={new QueryClient()}><AuthShell /></QueryClientProvider>);
+  expect(await screen.findByText(/owner@example.test/)).toBeInTheDocument();
+});

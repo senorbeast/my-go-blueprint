@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE permissions (id uuid PRIMARY KEY, name text NOT NULL UNIQUE, description text NOT NULL DEFAULT '');
+-- +goose Down
+DROP TABLE permissions;

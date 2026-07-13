@@ -1,0 +1,13 @@
+version: "2"
+sql:
+  - engine: "{{if eq .Database "postgres"}}postgresql{{else}}mysql{{end}}"
+    schema: "migrations/{{.Database}}"
+    queries: "internal/features"
+    gen:
+      go:
+        package: "dbgen"
+        out: "internal/platform/database/dbgen"
+        sql_package: "{{if eq .Database "postgres"}}pgx/v5{{else}}database/sql{{end}}"
+        emit_interface: true
+        emit_json_tags: true
+

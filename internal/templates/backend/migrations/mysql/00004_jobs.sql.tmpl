@@ -1,0 +1,5 @@
+-- +goose Up
+CREATE TABLE jobs(id binary(16) PRIMARY KEY,name varchar(128) NOT NULL,version smallint unsigned NOT NULL,payload json NOT NULL,state varchar(32) NOT NULL,run_at timestamp(6) NOT NULL,attempts smallint unsigned NOT NULL DEFAULT 0,max_attempts smallint unsigned NOT NULL,lease_until timestamp(6),idempotency_key varchar(255) UNIQUE,created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6));
+-- +goose Down
+DROP TABLE jobs;
+

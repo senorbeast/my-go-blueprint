@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE roles (id binary(16) PRIMARY KEY, organization_id binary(16) NOT NULL, name varchar(160) NOT NULL, created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY roles_organization_name (organization_id, name), FOREIGN KEY (organization_id) REFERENCES organizations(id));
+-- +goose Down
+DROP TABLE roles;

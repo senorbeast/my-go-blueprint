@@ -1,0 +1,11 @@
+-- +goose Up
+CREATE TABLE cms_post_tags (
+  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  post_id uuid NOT NULL REFERENCES cms_posts(id) ON DELETE CASCADE,
+  tag_id uuid NOT NULL REFERENCES cms_tags(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (post_id, tag_id)
+);
+CREATE INDEX cms_post_tags_tenant_idx ON cms_post_tags (organization_id, tag_id, post_id);
+-- +goose Down
+DROP TABLE cms_post_tags;

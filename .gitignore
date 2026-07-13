@@ -1,0 +1,10 @@
+/.cache/
+/.gocache/
+/.pnpm-store/
+/.tmp/
+/dist/
+/coverage/
+*.log
+.env
+.DS_Store
+Thumbs.db

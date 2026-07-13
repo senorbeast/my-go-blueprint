@@ -1,0 +1,18 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os/signal"
+	"syscall"
+
+	"{{.Module}}/backend/internal/platform/jobs"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	registry := jobs.NewRegistry()
+	log.Printf("worker ready with %d registered handlers", registry.Count())
+	<-ctx.Done()
+}

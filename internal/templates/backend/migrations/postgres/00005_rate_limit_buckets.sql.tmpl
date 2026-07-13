@@ -1,0 +1,5 @@
+-- +goose Up
+CREATE TABLE rate_limit_buckets(key_hash text NOT NULL,bucket_at timestamptz NOT NULL,hits bigint NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(key_hash,bucket_at));
+-- +goose Down
+DROP TABLE rate_limit_buckets;
+

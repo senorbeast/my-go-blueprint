@@ -1,0 +1,13 @@
+-- +goose Up
+CREATE TABLE cms_tags (
+  id uuid PRIMARY KEY,
+  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name varchar(120) NOT NULL,
+  slug varchar(160) NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, slug)
+);
+CREATE INDEX cms_tags_organization_idx ON cms_tags (organization_id, created_at DESC, id DESC);
+-- +goose Down
+DROP TABLE cms_tags;

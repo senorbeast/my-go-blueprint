@@ -1,0 +1,36 @@
+.PHONY: db-up db-down migrate seed backend{{if .Jobs}} worker{{end}}{{if .Cron}} scheduler{{end}}{{if .Frontend}} frontend{{end}} verify-generated sqlc
+
+db-up:
+	cd backend && docker compose up -d db
+
+db-down:
+	cd backend && docker compose down --volumes --remove-orphans
+
+migrate:
+	cd backend && go run ./cmd/migrate up
+
+seed:
+	cd backend && go run ./cmd/seed --profile {{.Seed}}
+
+sqlc:
+	cd backend && sqlc generate
+
+backend:
+	cd backend && air
+
+{{if .Jobs}}worker:
+	cd backend && go run ./cmd/worker
+{{end}}{{if .Cron}}
+scheduler:
+	cd backend && go run ./cmd/scheduler
+{{end}}
+{{if .Frontend}}
+frontend:
+	cd frontend && pnpm dev
+{{end}}
+
+verify-generated:
+	cd backend && go test ./...
+{{if .Frontend}}
+	cd frontend && pnpm typecheck && pnpm test && pnpm build
+{{end}}

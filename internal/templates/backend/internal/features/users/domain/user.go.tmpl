@@ -1,0 +1,17 @@
+package domain
+
+import (
+	"context"
+	"errors"
+	"net/mail"
+	"strings"
+	"time"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+type ID string
+type Email string
+func NewEmail(value string)(Email,error){value=strings.ToLower(strings.TrimSpace(value));if _,err:=mail.ParseAddress(value);err!=nil{return "",errors.New("invalid email")};return Email(value),nil}
+type User struct{ID ID;Email Email;DisplayName string;CreatedAt time.Time}
+type ListQuery struct{OrganizationID string;Page pagination.Request}
+type Repository interface{Create(context.Context,User)error;FindByID(context.Context,string,ID)(User,error);List(context.Context,ListQuery)(pagination.Page[User],error)}
+

@@ -1,0 +1,15 @@
+package domain
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+func TestPostPublishEnforcesWorkflow(t *testing.T) {
+	now := time.Unix(100, 0)
+	post := Post{Title: "A post", Body: "Body", Status: PostDraft}
+	if err := post.Publish(now); err != nil { t.Fatal(err) }
+	if post.Status != PostPublished || post.PublishedAt == nil || !post.PublishedAt.Equal(now) { t.Fatalf("post = %#v", post) }
+	if err := post.Publish(now); !errors.Is(err, ErrInvalidWorkflow) { t.Fatalf("second Publish() error = %v", err) }
+}

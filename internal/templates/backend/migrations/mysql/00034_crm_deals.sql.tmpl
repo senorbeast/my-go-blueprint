@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE crm_deals (id BINARY(16) PRIMARY KEY, organization_id BINARY(16) NOT NULL, company_id BINARY(16) NOT NULL, pipeline_id BINARY(16) NOT NULL, stage_id BINARY(16) NOT NULL, name VARCHAR(200) NOT NULL, value_cents BIGINT NOT NULL DEFAULT 0, created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY crm_deals_tenant_id (organization_id, id), KEY crm_deals_tenant_created_idx (organization_id, created_at, id), CONSTRAINT crm_deals_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE, CONSTRAINT crm_deals_company_fk FOREIGN KEY (organization_id, company_id) REFERENCES crm_companies(organization_id, id), CONSTRAINT crm_deals_pipeline_fk FOREIGN KEY (organization_id, pipeline_id) REFERENCES crm_pipelines(organization_id, id), CONSTRAINT crm_deals_stage_fk FOREIGN KEY (organization_id, stage_id) REFERENCES crm_stages(organization_id, id), CHECK (value_cents >= 0));
+-- +goose Down
+DROP TABLE crm_deals;

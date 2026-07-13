@@ -1,0 +1,17 @@
+package http
+
+import(
+	"context"
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/features/users/application"
+	"{{.Module}}/backend/internal/platform/auth"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+type Routes struct{service *application.Service}
+func New(service *application.Service)Routes{return Routes{service}}
+func(r Routes)Descriptor()httpplatform.Descriptor{return httpplatform.Descriptor{Prefix:"/api/v1/organizations/{organizationID}/users",Tags:[]string{"Users"},Authentication:httpplatform.Required}}
+type listInput struct{Limit uint16 `query:"limit" minimum:"1" maximum:"100" default:"20"`;Cursor string `query:"cursor"`}
+type listOutput struct{Body any}
+func(r Routes)Register(reg httpplatform.Registrar)error{httpplatform.Register(reg,huma.Operation{OperationID:"list-users",Method:"GET",Path:"/api/v1/organizations/{organizationID}/users",Tags:[]string{"Users"}},func(ctx context.Context,in *listInput)(*listOutput,error){p,_:=auth.PrincipalFrom(ctx);limit,err:=pagination.NewLimit(in.Limit);if err!=nil{return nil,err};page,err:=r.service.List(ctx,p,pagination.Request{Cursor:in.Cursor,Limit:limit});if err!=nil{return nil,err};return &listOutput{Body:page},nil});return nil}
+

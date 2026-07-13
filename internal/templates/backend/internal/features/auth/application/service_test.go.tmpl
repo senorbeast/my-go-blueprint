@@ -1,0 +1,34 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"{{.Module}}/backend/internal/features/auth/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+)
+
+type reuseRepository struct{ revoked bool }
+func (*reuseRepository) Create(context.Context, domain.Session, domain.RefreshFamily, domain.RefreshToken) error { return nil }
+func (*reuseRepository) Rotate(context.Context, domain.Rotation) (domain.RotationResult, error) { return domain.RotationResult{Family: domain.RefreshFamily{ID: "family"}, Reused: true}, nil }
+func (*reuseRepository) RevokeSession(context.Context, platformauth.SessionID, time.Time) error { return nil }
+func (r *reuseRepository) RevokeFamily(context.Context, domain.FamilyID, time.Time) error { r.revoked = true; return nil }
+func (*reuseRepository) RevokeAllForUser(context.Context, platformauth.UserID, time.Time) error { return nil }
+type fixedClock struct{ now time.Time }
+func (c fixedClock) Now() time.Time { return c.now }
+type fixedSecrets struct{}
+func (fixedSecrets) NewSecret() (string, error) { return "replacement", nil }
+type fixedIDs struct{}
+func (fixedIDs) New() string { return "id" }
+type unusedIssuer struct{}
+func (unusedIssuer) Issue(context.Context, platformauth.Principal, time.Time) (string, error) { return "", errors.New("unexpected issue") }
+
+func TestRotateRevokesFamilyOnReuse(t *testing.T) {
+	repository := &reuseRepository{}
+	service := New(repository, fixedClock{time.Unix(100, 0)}, fixedSecrets{}, fixedIDs{}, unusedIssuer{}, time.Minute, time.Hour)
+	_, err := service.Rotate(context.Background(), "replayed")
+	if !errors.Is(err, domain.ErrRefreshTokenReuse) { t.Fatalf("Rotate() error = %v", err) }
+	if !repository.revoked { t.Fatal("refresh-token family was not revoked") }
+}

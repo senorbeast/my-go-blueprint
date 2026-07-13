@@ -1,0 +1,20 @@
+package pagination
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+)
+type Limit uint16
+func NewLimit(v uint16)(Limit,error){ if v==0||v>100{return 0,errors.New("limit must be 1..100")};return Limit(v),nil }
+type Request struct { Cursor string; Limit Limit }
+type Page[T any] struct { Items []T `json:"items"`; NextCursor *string `json:"nextCursor,omitempty"`; HasMore bool `json:"hasMore"` }
+type payload struct { Version int `json:"v"`; Tenant,Query string; Values []string }
+type Codec struct{ secret []byte }
+func NewCodec(secret string)Codec{return Codec{[]byte(secret)}}
+func(c Codec)Encode(tenant,query string,values ...string)(string,error){body,err:=json.Marshal(payload{1,tenant,query,values});if err!=nil{return "",err};return base64.RawURLEncoding.EncodeToString(append(body,c.sign(body)...)),nil}
+func(c Codec)Decode(value,tenant,query string)([]string,error){raw,err:=base64.RawURLEncoding.DecodeString(value);if err!=nil||len(raw)<sha256.Size{return nil,errors.New("invalid cursor")};body,sig:=raw[:len(raw)-sha256.Size],raw[len(raw)-sha256.Size:];if !hmac.Equal(sig,c.sign(body)){return nil,errors.New("invalid cursor")};var p payload;if json.Unmarshal(body,&p)!=nil||p.Version!=1||p.Tenant!=tenant||p.Query!=query{return nil,errors.New("cursor does not match query")};return p.Values,nil}
+func(c Codec)sign(body []byte)[]byte{h:=hmac.New(sha256.New,c.secret);_,_=h.Write(body);return h.Sum(nil)}
+

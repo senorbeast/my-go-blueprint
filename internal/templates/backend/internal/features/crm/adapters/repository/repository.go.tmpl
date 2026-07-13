@@ -1,0 +1,11 @@
+package repository
+
+import "{{.Module}}/backend/internal/features/crm/domain"
+
+// Queries is implemented by the dialect-specific sqlc adapter. Keeping it behind
+// the domain port prevents generated database records escaping into application code.
+type Queries interface { domain.Repository }
+type Repository struct { domain.Repository }
+func New(queries Queries) *Repository { return &Repository{Repository: queries} }
+var _ domain.Repository = (*Repository)(nil)
+

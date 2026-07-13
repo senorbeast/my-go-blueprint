@@ -1,0 +1,40 @@
+package repository
+
+import (
+	"context"
+	"time"
+
+	"{{.Module}}/backend/internal/features/auth/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+)
+
+// Store is implemented by the dialect-specific sqlc adapter. Its Rotate method
+// must lock the presented token and family before deciding whether it was reused.
+type Store interface {
+	CreateSession(context.Context, domain.Session, domain.RefreshFamily, domain.RefreshToken) error
+	RotateRefreshToken(context.Context, domain.Rotation) (domain.RotationResult, error)
+	RevokeSession(context.Context, platformauth.SessionID, time.Time) error
+	RevokeFamily(context.Context, domain.FamilyID, time.Time) error
+	RevokeAllForUser(context.Context, platformauth.UserID, time.Time) error
+}
+
+type Repository struct{ store Store }
+
+func New(store Store) *Repository { return &Repository{store: store} }
+func (r *Repository) Create(ctx context.Context, s domain.Session, f domain.RefreshFamily, t domain.RefreshToken) error {
+	return r.store.CreateSession(ctx, s, f, t)
+}
+func (r *Repository) Rotate(ctx context.Context, rotation domain.Rotation) (domain.RotationResult, error) {
+	return r.store.RotateRefreshToken(ctx, rotation)
+}
+func (r *Repository) RevokeSession(ctx context.Context, id platformauth.SessionID, at time.Time) error {
+	return r.store.RevokeSession(ctx, id, at)
+}
+func (r *Repository) RevokeFamily(ctx context.Context, id domain.FamilyID, at time.Time) error {
+	return r.store.RevokeFamily(ctx, id, at)
+}
+func (r *Repository) RevokeAllForUser(ctx context.Context, id platformauth.UserID, at time.Time) error {
+	return r.store.RevokeAllForUser(ctx, id, at)
+}
+
+var _ domain.Repository = (*Repository)(nil)

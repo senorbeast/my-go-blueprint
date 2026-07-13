@@ -1,0 +1,14 @@
+-- +goose Up
+CREATE TABLE cms_post_tags (
+  organization_id binary(16) NOT NULL,
+  post_id binary(16) NOT NULL,
+  tag_id binary(16) NOT NULL,
+  created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (post_id, tag_id),
+  KEY cms_post_tags_tenant_idx (organization_id, tag_id, post_id),
+  CONSTRAINT cms_post_tags_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  CONSTRAINT cms_post_tags_post_fk FOREIGN KEY (post_id) REFERENCES cms_posts(id) ON DELETE CASCADE,
+  CONSTRAINT cms_post_tags_tag_fk FOREIGN KEY (tag_id) REFERENCES cms_tags(id) ON DELETE CASCADE
+);
+-- +goose Down
+DROP TABLE cms_post_tags;

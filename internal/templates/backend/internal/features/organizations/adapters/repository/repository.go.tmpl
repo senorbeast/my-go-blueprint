@@ -1,0 +1,33 @@
+package repository
+
+import (
+	"context"
+
+	"{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+)
+
+type Store interface {
+	CreateOrganizationWithOwner(context.Context, domain.Organization, domain.Membership) error
+	FindMembership(context.Context, domain.ID, platformauth.UserID) (domain.Membership, error)
+	ListPermissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error)
+	AssignRole(context.Context, domain.ID, platformauth.UserID, domain.RoleID) error
+}
+type Repository struct{ store Store }
+
+func New(store Store) *Repository { return &Repository{store: store} }
+func (r *Repository) Create(ctx context.Context, o domain.Organization, m domain.Membership) error {
+	return r.store.CreateOrganizationWithOwner(ctx, o, m)
+}
+func (r *Repository) FindMembership(ctx context.Context, o domain.ID, u platformauth.UserID) (domain.Membership, error) {
+	return r.store.FindMembership(ctx, o, u)
+}
+func (r *Repository) Permissions(ctx context.Context, o domain.ID, u platformauth.UserID) ([]authorization.Permission, error) {
+	return r.store.ListPermissions(ctx, o, u)
+}
+func (r *Repository) AssignRole(ctx context.Context, o domain.ID, u platformauth.UserID, role domain.RoleID) error {
+	return r.store.AssignRole(ctx, o, u, role)
+}
+
+var _ domain.Repository = (*Repository)(nil)

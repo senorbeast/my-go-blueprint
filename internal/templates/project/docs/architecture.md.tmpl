@@ -1,0 +1,9 @@
+# Architecture
+
+Dependencies point from adapters to application behavior and domain types. Domain packages do not import Echo, Huma, sqlc, Zap, JWT, or queue implementations. Application constructors accept dependencies; bootstrap creates them.
+
+Features own their routes, contracts, use cases, repository interface/adapter, queries, migrations, jobs, seeds, tests, and frontend route. Cross-feature behavior uses an explicit domain/application interface rather than importing another adapter.
+
+Interfaces are reserved for real seams. Typed generic pagination/filter primitives are shared internally, while public repository methods use domain language.
+
+The API, worker, scheduler, migration, and seed commands share composition modules and can be deployed independently later.

@@ -1,0 +1,9 @@
+# Adding a Feature
+
+1. Define entities, value objects, invariants, errors, policies, and consumer-owned repository interfaces under `domain`.
+2. Add typed commands/queries under `application` and accept dependencies through constructors.
+3. Add one reversible Goose migration per table and sqlc queries scoped by organization where applicable.
+4. Implement repository and HTTP adapters; keep mapping at the adapter seam.
+5. Register a logical route group with OpenAPI tags, authentication, permission, and rate policy.
+6. Add seeds and tests through the feature interface.
+7. Regenerate OpenAPI and the frontend hey-api client, then build the matching UI slice.

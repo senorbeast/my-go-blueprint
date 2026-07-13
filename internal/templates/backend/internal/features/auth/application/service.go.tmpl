@@ -1,0 +1,94 @@
+package application
+
+import (
+	"context"
+	"crypto/sha256"
+	"time"
+
+	"{{.Module}}/backend/internal/features/auth/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+)
+
+type Clock interface{ Now() time.Time }
+type SecretGenerator interface{ NewSecret() (string, error) }
+type IDGenerator interface{ New() string }
+type AccessTokenIssuer interface {
+	Issue(context.Context, platformauth.Principal, time.Time) (string, error)
+}
+
+type Tokens struct {
+	AccessToken   string
+	RefreshToken  string
+	AccessExpiry  time.Time
+	RefreshExpiry time.Time
+}
+
+type Service struct {
+	repository domain.Repository
+	clock      Clock
+	secrets    SecretGenerator
+	ids        IDGenerator
+	issuer     AccessTokenIssuer
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+}
+
+func New(repository domain.Repository, clock Clock, secrets SecretGenerator, ids IDGenerator, issuer AccessTokenIssuer, accessTTL, refreshTTL time.Duration) *Service {
+	return &Service{repository: repository, clock: clock, secrets: secrets, ids: ids, issuer: issuer, accessTTL: accessTTL, refreshTTL: refreshTTL}
+}
+
+func (s *Service) Start(ctx context.Context, userID platformauth.UserID, organizationID platformauth.OrganizationID) (Tokens, error) {
+	now := s.clock.Now()
+	secret, err := s.secrets.NewSecret()
+	if err != nil {
+		return Tokens{}, err
+	}
+	sessionID := platformauth.SessionID(s.ids.New())
+	familyID := domain.FamilyID(s.ids.New())
+	session := domain.Session{ID: sessionID, UserID: userID, OrganizationID: organizationID, CreatedAt: now, ExpiresAt: now.Add(s.refreshTTL)}
+	family := domain.RefreshFamily{ID: familyID, SessionID: sessionID, CreatedAt: now}
+	refresh := domain.RefreshToken{ID: domain.TokenID(s.ids.New()), FamilyID: familyID, Hash: sha256.Sum256([]byte(secret)), CreatedAt: now, ExpiresAt: now.Add(s.refreshTTL)}
+	if err := s.repository.Create(ctx, session, family, refresh); err != nil {
+		return Tokens{}, err
+	}
+	return s.issue(ctx, session, secret, now)
+}
+
+func (s *Service) Rotate(ctx context.Context, presented string) (Tokens, error) {
+	if presented == "" {
+		return Tokens{}, domain.ErrInvalidRefreshToken
+	}
+	now := s.clock.Now()
+	replacement, err := s.secrets.NewSecret()
+	if err != nil {
+		return Tokens{}, err
+	}
+	result, err := s.repository.Rotate(ctx, domain.Rotation{PresentedHash: sha256.Sum256([]byte(presented)), Replacement: domain.RefreshToken{ID: domain.TokenID(s.ids.New()), Hash: sha256.Sum256([]byte(replacement)), CreatedAt: now, ExpiresAt: now.Add(s.refreshTTL)}, Now: now})
+	if err != nil {
+		return Tokens{}, err
+	}
+	if result.Reused {
+		if revokeErr := s.repository.RevokeFamily(ctx, result.Family.ID, now); revokeErr != nil {
+			return Tokens{}, revokeErr
+		}
+		return Tokens{}, domain.ErrRefreshTokenReuse
+	}
+	return s.issue(ctx, result.Session, replacement, now)
+}
+
+func (s *Service) Logout(ctx context.Context, principal platformauth.Principal) error {
+	return s.repository.RevokeSession(ctx, principal.SessionID, s.clock.Now())
+}
+
+func (s *Service) LogoutAll(ctx context.Context, principal platformauth.Principal) error {
+	return s.repository.RevokeAllForUser(ctx, principal.UserID, s.clock.Now())
+}
+
+func (s *Service) issue(ctx context.Context, session domain.Session, refresh string, now time.Time) (Tokens, error) {
+	expires := now.Add(s.accessTTL)
+	access, err := s.issuer.Issue(ctx, platformauth.Principal{UserID: session.UserID, OrganizationID: session.OrganizationID, SessionID: session.ID}, expires)
+	if err != nil {
+		return Tokens{}, err
+	}
+	return Tokens{AccessToken: access, RefreshToken: refresh, AccessExpiry: expires, RefreshExpiry: session.ExpiresAt}, nil
+}

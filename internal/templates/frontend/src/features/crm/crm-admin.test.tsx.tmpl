@@ -1,0 +1,11 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { CRMAdmin } from "./crm-admin";
+
+describe("CRMAdmin", () => {
+  it("hides CRM data when the principal has no permissions", () => {
+    render(<QueryClientProvider client={new QueryClient()}><CRMAdmin organizationID="org-1" permissions={[]} /></QueryClientProvider>);
+    expect(screen.getByText(/do not have permission/i)).toBeInTheDocument();
+  });
+});

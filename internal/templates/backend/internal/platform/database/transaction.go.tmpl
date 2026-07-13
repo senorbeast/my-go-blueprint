@@ -1,0 +1,8 @@
+package database
+
+import "context"
+
+// Repositories is implemented by the composition root with transaction-bound feature ports.
+type Repositories interface{}
+type TransactionRunner interface { WithinTransaction(context.Context, func(context.Context, Repositories) error) error }
+

@@ -1,0 +1,17 @@
+package logging
+
+import "go.uber.org/zap"
+
+// Logger is the application-facing structured logging seam; adapters may use Zap directly.
+type Logger interface {
+	With(...zap.Field) Logger
+	Info(string, ...zap.Field)
+	Error(string, error, ...zap.Field)
+}
+
+type zapLogger struct{ logger *zap.Logger }
+func Wrap(logger *zap.Logger) Logger { return zapLogger{logger} }
+func (l zapLogger) With(fields ...zap.Field) Logger { return zapLogger{l.logger.With(fields...)} }
+func (l zapLogger) Info(message string, fields ...zap.Field) { l.logger.Info(message, fields...) }
+func (l zapLogger) Error(message string, err error, fields ...zap.Field) { l.logger.Error(message, append(fields, zap.Error(err))...) }
+

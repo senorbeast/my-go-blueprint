@@ -1,0 +1,39 @@
+name: Generated Stack Nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  pairwise-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - run: go test ./internal/acceptance -run TestNightlyScenariosCoverEveryValidOptionPair -count=1
+
+  docker-dialects:
+    strategy:
+      fail-fast: false
+      matrix: {database: [postgres, mysql]}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - run: go build -o blueprint .
+      - run: ./blueprint create --name nightly --module example.com/nightly --output /tmp/nightly --database ${{ matrix.database }} --no-frontend --seed demo --feature cms --feature crm --feature jobs --feature cron
+      - name: Start database
+        working-directory: /tmp/nightly/backend
+        run: docker compose --project-name blueprint-nightly-${{ matrix.database }} up -d --wait db
+      - name: Migrate, rollback, remigrate, and seed twice
+        working-directory: /tmp/nightly/backend
+        env:
+          DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgres://app:app@127.0.0.1:5432/app?sslmode=disable' || 'app:app@tcp(127.0.0.1:3306)/app?parseTime=true&multiStatements=true' }}
+        run: go mod tidy && go run ./cmd/migrate up && go run ./cmd/migrate reset && go run ./cmd/migrate up && go run ./cmd/seed --profile demo && go run ./cmd/seed --profile demo
+      - name: Clean up
+        if: always()
+        working-directory: /tmp/nightly/backend
+        run: docker compose --project-name blueprint-nightly-${{ matrix.database }} down --volumes --remove-orphans

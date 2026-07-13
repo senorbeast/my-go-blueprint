@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  generator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - run: go test ./...
+      - run: go build -o blueprint .
+      - run: ./blueprint create --name smoke --module example.com/smoke --output /tmp/smoke --database postgres --feature auth --feature rbac --feature jobs --feature cron
+      - run: ./blueprint verify --dir /tmp/smoke
+
+  generated-backend:
+    strategy:
+      matrix: {database: [postgres, mysql]}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - run: go build -o blueprint .
+      - run: ./blueprint create --name full --module example.com/full --output /tmp/full --database ${{ matrix.database }} --no-frontend --seed demo --feature cms --feature crm --feature jobs --feature cron
+      - working-directory: /tmp/full/backend
+        run: go mod tidy && go test ./...
+
+  generated-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - uses: pnpm/action-setup@v4
+        with: {version: 10}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: go run . create --name web --module example.com/web --output /tmp/web --database postgres --seed demo --feature cms --feature crm
+      - working-directory: /tmp/web/frontend
+        run: pnpm install && pnpm typecheck && pnpm test && pnpm build

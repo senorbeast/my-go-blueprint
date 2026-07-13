@@ -1,0 +1,21 @@
+package http
+
+import "time"
+
+type RefreshInput struct {
+	RefreshToken string `cookie:"refresh_token" required:"true"`
+}
+type RefreshOutput struct {
+	SetCookie []string `header:"Set-Cookie"`
+	Body      struct {
+		AccessExpiresAt  time.Time `json:"accessExpiresAt"`
+		RefreshExpiresAt time.Time `json:"refreshExpiresAt"`
+	}
+}
+
+type LogoutInput struct {
+	RefreshToken string `cookie:"refresh_token"`
+}
+type LogoutOutput struct {
+	SetCookie []string `header:"Set-Cookie"`
+}

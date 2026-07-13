@@ -1,0 +1,12 @@
+# {{.Name}} backend
+
+Generated Echo + Huma service for `{{.Module}}/backend`.
+
+```sh
+docker compose up -d db
+go run ./cmd/migrate up
+go run ./cmd/seed --profile {{.Seed}}
+air
+```
+
+Domain and application packages point inward. Only `internal/bootstrap` constructs adapters.

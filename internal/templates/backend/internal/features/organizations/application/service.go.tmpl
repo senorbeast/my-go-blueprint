@@ -1,0 +1,40 @@
+package application
+
+import (
+	"context"
+	"time"
+
+	"{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+)
+
+type Clock interface{ Now() time.Time }
+type IDGenerator interface{ New() string }
+type Service struct {
+	repository domain.Repository
+	authorizer authorization.Authorizer
+	clock      Clock
+	ids        IDGenerator
+}
+
+func New(repository domain.Repository, authorizer authorization.Authorizer, clock Clock, ids IDGenerator) *Service {
+	return &Service{repository: repository, authorizer: authorizer, clock: clock, ids: ids}
+}
+func (s *Service) Create(ctx context.Context, principal platformauth.Principal, name string) (domain.Organization, error) {
+	organization, err := domain.New(domain.ID(s.ids.New()), name, s.clock.Now())
+	if err != nil {
+		return domain.Organization{}, err
+	}
+	membership := domain.Membership{OrganizationID: organization.ID, UserID: principal.UserID, Active: true, CreatedAt: s.clock.Now()}
+	if err := s.repository.Create(ctx, organization, membership); err != nil {
+		return domain.Organization{}, err
+	}
+	return organization, nil
+}
+func (s *Service) AssignRole(ctx context.Context, principal platformauth.Principal, userID platformauth.UserID, roleID domain.RoleID) error {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil {
+		return err
+	}
+	return s.repository.AssignRole(ctx, principal.OrganizationID, userID, roleID)
+}

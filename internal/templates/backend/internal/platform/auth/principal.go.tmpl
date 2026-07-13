@@ -1,0 +1,11 @@
+package auth
+
+import "context"
+type UserID string
+type OrganizationID string
+type SessionID string
+type Principal struct { UserID UserID; OrganizationID OrganizationID; SessionID SessionID }
+type contextKey struct{}
+func WithPrincipal(ctx context.Context,p Principal) context.Context { return context.WithValue(ctx,contextKey{},p) }
+func PrincipalFrom(ctx context.Context) (Principal,bool) { p,ok:=ctx.Value(contextKey{}).(Principal); return p,ok }
+

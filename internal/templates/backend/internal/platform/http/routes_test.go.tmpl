@@ -1,0 +1,44 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+	"{{.Module}}/backend/internal/platform/authorization"
+)
+
+type testModule struct{ registered bool }
+func (*testModule) Descriptor() Descriptor { permission := authorization.Permission("test.view"); return Descriptor{Prefix: "/api/v1/test", Tags: []string{"Test"}, Authentication: Required, Permission: &permission} }
+func (m *testModule) Register(Registrar) error { m.registered = true; return nil }
+type invalidModule struct{}
+func (invalidModule) Descriptor() Descriptor { return Descriptor{Prefix: "invalid"} }
+func (invalidModule) Register(Registrar) error { return nil }
+
+func TestPlatformRoutesAndOpenAPI(t *testing.T) {
+	e := echo.New()
+	registrar := NewRegistrar(e)
+	registrar.PlatformRoutes(func(context.Context) error { return nil })
+
+	for _, test := range []struct{ path, contains string }{
+		{"/healthz", `"status":"ok"`},
+		{"/readyz", `"status":"ready"`},
+		{"/openapi.json", `"operationId":"health"`},
+	} {
+		recorder := httptest.NewRecorder()
+		e.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if recorder.Code != http.StatusOK { t.Fatalf("%s status = %d, body = %s", test.path, recorder.Code, recorder.Body.String()) }
+		if !strings.Contains(recorder.Body.String(), test.contains) { t.Fatalf("%s body = %s", test.path, recorder.Body.String()) }
+	}
+}
+
+func TestRegisterModuleValidatesLogicalGroup(t *testing.T) {
+	registrar := NewRegistrar(echo.New())
+	module := &testModule{}
+	if err := registrar.RegisterModule(module); err != nil { t.Fatal(err) }
+	if !module.registered { t.Fatal("module was not registered") }
+	if err := registrar.RegisterModule(invalidModule{}); err == nil { t.Fatal("invalid logical group accepted") }
+}

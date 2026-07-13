@@ -1,0 +1,5 @@
+-- +goose Up
+CREATE TABLE jobs(id uuid PRIMARY KEY,name text NOT NULL,version smallint NOT NULL,payload jsonb NOT NULL,state text NOT NULL,run_at timestamptz NOT NULL,attempts smallint NOT NULL DEFAULT 0,max_attempts smallint NOT NULL,lease_until timestamptz,idempotency_key text UNIQUE,created_at timestamptz NOT NULL DEFAULT now());
+-- +goose Down
+DROP TABLE jobs;
+

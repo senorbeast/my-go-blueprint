@@ -1,0 +1,59 @@
+package http
+
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	"go.uber.org/zap"
+
+	"{{.Module}}/backend/internal/platform/config"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
+)
+
+func InstallMiddleware(e *echo.Echo, logger *zap.Logger, cfg config.Config) {
+	e.Use(middleware.RequestID())
+	e.Use(middleware.Recover())
+	e.Use(middleware.Secure())
+	e.Use(middleware.BodyLimit("2M"))
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: cfg.CORSOrigins,
+		AllowMethods: []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderXRequestID, "X-CSRF-Token"},
+		AllowCredentials: true,
+	}))
+	e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{Timeout: 30 * time.Second}))
+	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogRequestID: true, LogURI: true, LogMethod: true, LogStatus: true, LogLatency: true, LogError: true,
+		LogValuesFunc: func(_ echo.Context, values middleware.RequestLoggerValues) error {
+			fields := []zap.Field{zap.String("request_id", values.RequestID), zap.String("method", values.Method), zap.String("uri", values.URI), zap.Int("status", values.Status), zap.Duration("latency", values.Latency)}
+			if values.Error != nil { logger.Error("http request failed", append(fields, zap.Error(values.Error))...) } else { logger.Info("http request", fields...) }
+			return nil
+		},
+	}))
+	e.HTTPErrorHandler = ProblemHandler(logger)
+}
+
+func ProblemHandler(logger *zap.Logger) echo.HTTPErrorHandler {
+	return func(err error, c echo.Context) {
+		status, code, message := http.StatusInternalServerError, "internal", "An internal error occurred"
+		var applicationError *platformerrors.Error
+		if errors.As(err, &applicationError) {
+			code, message = applicationError.Code, applicationError.Message
+			switch applicationError.Kind {
+			case platformerrors.Validation: status = http.StatusUnprocessableEntity
+			case platformerrors.Unauthenticated: status = http.StatusUnauthorized
+			case platformerrors.Forbidden: status = http.StatusForbidden
+			case platformerrors.NotFound: status = http.StatusNotFound
+			case platformerrors.Conflict: status = http.StatusConflict
+			case platformerrors.RateLimited: status = http.StatusTooManyRequests
+			case platformerrors.Unavailable: status = http.StatusServiceUnavailable
+			}
+		}
+		problem := map[string]any{"type": "urn:problem:" + code, "title": http.StatusText(status), "status": status, "detail": message, "code": code, "requestId": c.Response().Header().Get(echo.HeaderXRequestID)}
+		if responseErr := c.JSON(status, problem); responseErr != nil { logger.Error("write problem response", zap.Error(responseErr)) }
+		if status >= 500 { logger.Error("unhandled request error", zap.Error(err), zap.String("request_id", c.Response().Header().Get(echo.HeaderXRequestID)) ) }
+	}
+}

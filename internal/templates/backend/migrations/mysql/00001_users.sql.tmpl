@@ -1,0 +1,5 @@
+-- +goose Up
+CREATE TABLE users(id binary(16) PRIMARY KEY,email varchar(320) NOT NULL UNIQUE,display_name varchar(255) NOT NULL,created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6));
+-- +goose Down
+DROP TABLE users;
+

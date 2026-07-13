@@ -1,0 +1,29 @@
+package application
+
+import (
+	"context"
+	"fmt"
+	"{{.Module}}/backend/internal/features/crm/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type Service struct { repo domain.Repository; authz authorization.Authorizer }
+func New(repo domain.Repository, authz authorization.Authorizer) *Service { return &Service{repo: repo, authz: authz} }
+
+func (s *Service) List(ctx context.Context, principal auth.Principal, kind domain.EntityKind, page pagination.Request) (any, error) {
+	permission := authorization.Permission("crm." + string(kind) + ".view")
+	if err := s.authz.Authorize(ctx, principal, permission, authorization.Resource{Kind: string(kind), OrganizationID: principal.OrganizationID}); err != nil { return nil, err }
+	query := domain.ListQuery{OrganizationID: domain.OrganizationID(principal.OrganizationID), Page: page}
+	switch kind {
+	case domain.Companies: return s.repo.ListCompanies(ctx, query)
+	case domain.Contacts: return s.repo.ListContacts(ctx, query)
+	case domain.Pipelines: return s.repo.ListPipelines(ctx, query)
+	case domain.Stages: return s.repo.ListStages(ctx, query)
+	case domain.Deals: return s.repo.ListDeals(ctx, query)
+	case domain.Activities: return s.repo.ListActivities(ctx, query)
+	default: return nil, fmt.Errorf("unsupported CRM entity %q", kind)
+	}
+}
+

@@ -1,0 +1,27 @@
+package http
+
+import (
+	"context"
+
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/features/cms/application"
+	"{{.Module}}/backend/internal/features/cms/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type Routes struct { service *application.Service }
+func New(service *application.Service) Routes { return Routes{service: service} }
+func (Routes) Descriptor() httpplatform.Descriptor { permission := authorization.Permission(domain.PermissionView); return httpplatform.Descriptor{Prefix: "/api/v1/organizations/{organizationID}/cms", Tags: []string{"CMS"}, Authentication: httpplatform.Required, Permission: &permission} }
+func (r Routes) Register(reg httpplatform.Registrar) error {
+	base := "/api/v1/organizations/{organizationID}/cms/posts"
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-cms-post", Method: "POST", Path: base, Tags: []string{"CMS"}}, r.createPost)
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-cms-posts", Method: "GET", Path: base, Tags: []string{"CMS"}}, r.listPosts)
+	httpplatform.Register(reg, huma.Operation{OperationID: "publish-cms-post", Method: "POST", Path: base + "/{postID}/publish", Tags: []string{"CMS"}}, r.publishPost)
+	return nil
+}
+func (r Routes) createPost(ctx context.Context, in *createPostInput) (*postOutput, error) { p, _ := auth.PrincipalFrom(ctx); post, err := r.service.CreatePost(ctx, p, application.CreatePost{Slug: in.Body.Slug, Title: in.Body.Title, Body: in.Body.Body, CategoryID: in.Body.CategoryID, TagIDs: in.Body.TagIDs}); if err != nil { return nil, err }; return &postOutput{Body: post}, nil }
+func (r Routes) listPosts(ctx context.Context, in *listPostsInput) (*postsOutput, error) { p, _ := auth.PrincipalFrom(ctx); limit, err := pagination.NewLimit(in.Limit); if err != nil { return nil, err }; page, err := r.service.ListPosts(ctx, p, domain.PostFilter{Status: in.Status, Search: in.Search}, pagination.Request{Cursor: in.Cursor, Limit: limit}); if err != nil { return nil, err }; return &postsOutput{Body: page}, nil }
+func (r Routes) publishPost(ctx context.Context, in *publishPostInput) (*postOutput, error) { p, _ := auth.PrincipalFrom(ctx); post, err := r.service.PublishPost(ctx, p, in.PostID); if err != nil { return nil, err }; return &postOutput{Body: post}, nil }

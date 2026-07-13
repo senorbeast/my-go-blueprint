@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE sessions (id binary(16) PRIMARY KEY, user_id binary(16) NOT NULL, organization_id binary(16) NOT NULL, created_at timestamp(6) NOT NULL, expires_at timestamp(6) NOT NULL, revoked_at timestamp(6) NULL, FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (organization_id) REFERENCES organizations(id));
+-- +goose Down
+DROP TABLE sessions;

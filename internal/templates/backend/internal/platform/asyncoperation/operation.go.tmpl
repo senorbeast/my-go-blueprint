@@ -1,0 +1,8 @@
+package asyncoperation
+
+import "time"
+type ID string
+type Status string
+const (Pending Status="pending";Running Status="running";Succeeded Status="succeeded";Failed Status="failed")
+type Operation struct{ID ID;Status Status;CreatedAt time.Time;FinishedAt *time.Time;ErrorCode string}
+

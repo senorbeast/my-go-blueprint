@@ -1,0 +1,65 @@
+package domain
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+)
+
+var (
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	ErrRefreshTokenReuse   = errors.New("refresh token reuse detected")
+	ErrSessionRevoked      = errors.New("session revoked")
+)
+
+type FamilyID string
+type TokenID string
+
+type Session struct {
+	ID             platformauth.SessionID
+	UserID         platformauth.UserID
+	OrganizationID platformauth.OrganizationID
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+}
+
+type RefreshFamily struct {
+	ID        FamilyID
+	SessionID platformauth.SessionID
+	CreatedAt time.Time
+	RevokedAt *time.Time
+}
+
+type RefreshToken struct {
+	ID        TokenID
+	FamilyID  FamilyID
+	Hash      [32]byte
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+}
+
+type Rotation struct {
+	PresentedHash [32]byte
+	Replacement   RefreshToken
+	Now           time.Time
+}
+
+type RotationResult struct {
+	Session Session
+	Family  RefreshFamily
+	Reused  bool
+}
+
+// Repository owns the atomic session and refresh-family operations. Rotate must
+// mark the presented token used and insert its replacement in one transaction.
+type Repository interface {
+	Create(context.Context, Session, RefreshFamily, RefreshToken) error
+	Rotate(context.Context, Rotation) (RotationResult, error)
+	RevokeSession(context.Context, platformauth.SessionID, time.Time) error
+	RevokeFamily(context.Context, FamilyID, time.Time) error
+	RevokeAllForUser(context.Context, platformauth.UserID, time.Time) error
+}

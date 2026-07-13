@@ -1,0 +1,31 @@
+package domain
+
+import (
+	"context"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type ListQuery struct { OrganizationID OrganizationID; Page pagination.Request }
+
+// Repository keeps tenant scope explicit on every read and write boundary.
+type Repository interface {
+	CreateCompany(context.Context, Company) error
+	CreateContact(context.Context, Contact) error
+	CreatePipeline(context.Context, Pipeline) error
+	CreateStage(context.Context, Stage) error
+	CreateDeal(context.Context, Deal) error
+	CreateActivity(context.Context, Activity) error
+	FindCompany(context.Context, OrganizationID, ID) (Company, error)
+	FindContact(context.Context, OrganizationID, ID) (Contact, error)
+	FindPipeline(context.Context, OrganizationID, ID) (Pipeline, error)
+	FindStage(context.Context, OrganizationID, ID) (Stage, error)
+	FindDeal(context.Context, OrganizationID, ID) (Deal, error)
+	FindActivity(context.Context, OrganizationID, ID) (Activity, error)
+	ListCompanies(context.Context, ListQuery) (pagination.Page[Company], error)
+	ListContacts(context.Context, ListQuery) (pagination.Page[Contact], error)
+	ListPipelines(context.Context, ListQuery) (pagination.Page[Pipeline], error)
+	ListStages(context.Context, ListQuery) (pagination.Page[Stage], error)
+	ListDeals(context.Context, ListQuery) (pagination.Page[Deal], error)
+	ListActivities(context.Context, ListQuery) (pagination.Page[Activity], error)
+}
+

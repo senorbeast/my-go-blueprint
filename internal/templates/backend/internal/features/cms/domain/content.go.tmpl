@@ -1,0 +1,84 @@
+package domain
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type PostID string
+type CategoryID string
+type TagID string
+type OrganizationID string
+type UserID string
+type Slug string
+
+type PostStatus string
+
+const (
+	PostDraft PostStatus = "draft"
+	PostPublished PostStatus = "published"
+	PostArchived PostStatus = "archived"
+)
+
+var (
+	ErrInvalidContent = errors.New("invalid CMS content")
+	ErrInvalidWorkflow = errors.New("invalid post workflow transition")
+)
+
+func NewSlug(value string) (Slug, error) {
+	value = strings.Trim(strings.ToLower(strings.TrimSpace(value)), "-")
+	if value == "" || strings.ContainsAny(value, " /\\?#") {
+		return "", ErrInvalidContent
+	}
+	return Slug(value), nil
+}
+
+type Post struct {
+	ID             PostID        `json:"id"`
+	OrganizationID OrganizationID `json:"organizationId"`
+	AuthorID       UserID        `json:"authorId"`
+	CategoryID     *CategoryID   `json:"categoryId,omitempty"`
+	Slug           Slug          `json:"slug"`
+	Title          string        `json:"title"`
+	Body           string        `json:"body"`
+	Status         PostStatus    `json:"status"`
+	PublishedAt    *time.Time    `json:"publishedAt,omitempty"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
+}
+
+func (p *Post) Publish(now time.Time) error {
+	if p.Status != PostDraft || strings.TrimSpace(p.Title) == "" || strings.TrimSpace(p.Body) == "" {
+		return ErrInvalidWorkflow
+	}
+	p.Status, p.PublishedAt, p.UpdatedAt = PostPublished, &now, now
+	return nil
+}
+
+func (p *Post) Archive(now time.Time) error {
+	if p.Status == PostArchived { return ErrInvalidWorkflow }
+	p.Status, p.UpdatedAt = PostArchived, now
+	return nil
+}
+
+type Category struct { ID CategoryID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; Name string `json:"name"`; Slug Slug `json:"slug"` }
+type Tag struct { ID TagID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; Name string `json:"name"`; Slug Slug `json:"slug"` }
+
+type PostFilter struct { Status *PostStatus; CategoryID *CategoryID; Search string }
+type PostListQuery struct { OrganizationID OrganizationID; Filter PostFilter; Page pagination.Request }
+type TaxonomyListQuery struct { OrganizationID OrganizationID; Page pagination.Request }
+
+type Repository interface {
+	CreatePost(context.Context, Post, []TagID) error
+	FindPost(context.Context, OrganizationID, PostID) (Post, error)
+	ListPosts(context.Context, PostListQuery) (pagination.Page[Post], error)
+	SavePost(context.Context, Post) error
+	CreateCategory(context.Context, Category) error
+	ListCategories(context.Context, TaxonomyListQuery) (pagination.Page[Category], error)
+	CreateTag(context.Context, Tag) error
+	ListTags(context.Context, TaxonomyListQuery) (pagination.Page[Tag], error)
+}

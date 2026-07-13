@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE crm_contacts (id BINARY(16) PRIMARY KEY, organization_id BINARY(16) NOT NULL, company_id BINARY(16) NULL, name VARCHAR(200) NOT NULL, email VARCHAR(320) NOT NULL DEFAULT '', created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY crm_contacts_tenant_id (organization_id, id), KEY crm_contacts_tenant_name_idx (organization_id, name, id), CONSTRAINT crm_contacts_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE, CONSTRAINT crm_contacts_company_fk FOREIGN KEY (organization_id, company_id) REFERENCES crm_companies(organization_id, id));
+-- +goose Down
+DROP TABLE crm_contacts;

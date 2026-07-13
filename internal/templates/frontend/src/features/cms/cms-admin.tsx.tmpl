@@ -1,0 +1,13 @@
+import { useQuery } from "@tanstack/react-query";
+import { listCMSPosts } from "./api";
+
+export interface CMSAdminProps { organizationId: string; canCreate?: boolean }
+export function CMSAdmin({ organizationId, canCreate = false }: CMSAdminProps) {
+  const posts = useQuery({ queryKey: ["cms", organizationId, "posts"], queryFn: () => listCMSPosts({ organizationId }) });
+  if (posts.isPending) return <main className="p-8">Loading content…</main>;
+  if (posts.isError) return <main role="alert" className="p-8 text-red-700">Unable to load content.</main>;
+  return <main className="mx-auto max-w-6xl p-8">
+    <header className="flex items-center justify-between"><div><h1 className="text-2xl font-semibold">Content</h1><p className="text-slate-600">Manage drafts and published posts.</p></div>{canCreate && <button className="rounded bg-slate-900 px-4 py-2 text-white">New post</button>}</header>
+    {posts.data.items.length === 0 ? <p className="mt-8 text-slate-600">No posts yet.</p> : <ul className="mt-8 divide-y rounded border">{posts.data.items.map((post) => <li key={post.id} className="flex items-center justify-between p-4"><div><h2 className="font-medium">{post.title}</h2><p className="text-sm text-slate-500">/{post.slug}</p></div><span className="rounded bg-slate-100 px-2 py-1 text-xs uppercase">{post.status}</span></li>)}</ul>}
+  </main>;
+}

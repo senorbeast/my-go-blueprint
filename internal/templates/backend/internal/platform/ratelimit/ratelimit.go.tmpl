@@ -1,0 +1,11 @@
+package ratelimit
+
+import (
+	"context"
+	"time"
+)
+type Key struct { Scope, Subject, Operation string }
+type Policy struct { Limit uint64; Window time.Duration; FailClosed bool }
+type Decision struct { Allowed bool; Limit, Remaining uint64; ResetAt, RetryAt time.Time }
+type Limiter interface { Allow(context.Context,Key,Policy)(Decision,error) }
+

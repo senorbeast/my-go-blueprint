@@ -1,0 +1,14 @@
+-- +goose Up
+CREATE TABLE cms_tags (
+  id binary(16) PRIMARY KEY,
+  organization_id binary(16) NOT NULL,
+  name varchar(120) NOT NULL,
+  slug varchar(160) NOT NULL,
+  created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY cms_tags_tenant_slug (organization_id, slug),
+  KEY cms_tags_organization_idx (organization_id, created_at, id),
+  CONSTRAINT cms_tags_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+-- +goose Down
+DROP TABLE cms_tags;

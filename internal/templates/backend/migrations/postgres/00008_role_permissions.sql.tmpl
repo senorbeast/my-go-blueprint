@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE role_permissions (role_id uuid NOT NULL REFERENCES roles(id), permission_id uuid NOT NULL REFERENCES permissions(id), PRIMARY KEY (role_id, permission_id));
+-- +goose Down
+DROP TABLE role_permissions;

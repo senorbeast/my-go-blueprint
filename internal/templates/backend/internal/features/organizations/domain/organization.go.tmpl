@@ -1,0 +1,54 @@
+package domain
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+)
+
+var ErrInvalidName = errors.New("organization name is required")
+
+type ID = platformauth.OrganizationID
+type RoleID string
+type PermissionID string
+
+type Organization struct {
+	ID        ID
+	Name      string
+	CreatedAt time.Time
+}
+
+func New(id ID, name string, createdAt time.Time) (Organization, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Organization{}, ErrInvalidName
+	}
+	return Organization{ID: id, Name: name, CreatedAt: createdAt}, nil
+}
+
+type Membership struct {
+	OrganizationID ID
+	UserID         platformauth.UserID
+	Active         bool
+	CreatedAt      time.Time
+}
+type Role struct {
+	ID             RoleID
+	OrganizationID ID
+	Name           string
+}
+type Permission struct {
+	ID   PermissionID
+	Name authorization.Permission
+}
+
+type Repository interface {
+	Create(context.Context, Organization, Membership) error
+	FindMembership(context.Context, ID, platformauth.UserID) (Membership, error)
+	Permissions(context.Context, ID, platformauth.UserID) ([]authorization.Permission, error)
+	AssignRole(context.Context, ID, platformauth.UserID, RoleID) error
+}

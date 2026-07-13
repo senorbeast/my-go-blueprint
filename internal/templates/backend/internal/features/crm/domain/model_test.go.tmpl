@@ -1,0 +1,8 @@
+package domain
+
+import "testing"
+
+func TestValidateName(t *testing.T) {
+	if got, err := ValidateName("  Acme  "); err != nil || got != "Acme" { t.Fatalf("ValidateName() = %q, %v", got, err) }
+	if _, err := ValidateName(" "); err == nil { t.Fatal("empty name accepted") }
+}

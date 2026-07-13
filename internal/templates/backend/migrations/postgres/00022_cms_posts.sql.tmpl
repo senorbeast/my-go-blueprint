@@ -1,0 +1,19 @@
+-- +goose Up
+CREATE TABLE cms_posts (
+  id uuid PRIMARY KEY,
+  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  author_id uuid NOT NULL REFERENCES users(id),
+  category_id uuid REFERENCES cms_categories(id) ON DELETE SET NULL,
+  slug varchar(200) NOT NULL,
+  title varchar(240) NOT NULL,
+  body text NOT NULL,
+  status varchar(20) NOT NULL CHECK (status IN ('draft','published','archived')),
+  published_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, slug)
+);
+CREATE INDEX cms_posts_cursor_idx ON cms_posts (organization_id, created_at DESC, id DESC);
+CREATE INDEX cms_posts_status_idx ON cms_posts (organization_id, status, created_at DESC, id DESC);
+-- +goose Down
+DROP TABLE cms_posts;

@@ -1,0 +1,31 @@
+package http
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humaecho"
+	"github.com/labstack/echo/v4"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/ratelimit"
+)
+type Authentication string
+const(Public Authentication="public";Optional Authentication="optional";Required Authentication="required")
+type Descriptor struct{Prefix string;Tags []string;Authentication Authentication;Permission *authorization.Permission;RatePolicy *ratelimit.Policy}
+type Module interface{Descriptor()Descriptor;Register(Registrar)error}
+type Registrar struct{echo *echo.Echo;API huma.API}
+func NewRegistrar(e *echo.Echo)Registrar{cfg:=huma.DefaultConfig("{{.Name}} API","1.0.0");return Registrar{e,humaecho.New(e,cfg)}}
+func Register[I,O any](r Registrar,op huma.Operation,handler func(context.Context,*I)(*O,error)){huma.Register(r.API,op,handler)}
+func (r Registrar) RegisterModule(module Module) error {
+	if module == nil { return fmt.Errorf("route module is required") }
+	descriptor := module.Descriptor()
+	if !strings.HasPrefix(descriptor.Prefix, "/") { return fmt.Errorf("route prefix %q must begin with /", descriptor.Prefix) }
+	if len(descriptor.Tags) == 0 { return fmt.Errorf("route module %s must declare an OpenAPI tag", descriptor.Prefix) }
+	if descriptor.Authentication == Required && descriptor.Permission == nil { return fmt.Errorf("protected route module %s must declare a permission", descriptor.Prefix) }
+	return module.Register(r)
+}
+type healthInput struct{}
+type healthOutput struct{Body struct{Status string `json:"status"`}}
+func health(status string)func(context.Context,*healthInput)(*healthOutput,error){return func(context.Context,*healthInput)(*healthOutput,error){out:=&healthOutput{};out.Body.Status=status;return out,nil}}
+func(r Registrar)PlatformRoutes(readiness func(context.Context) error){Register(r,huma.Operation{OperationID:"health",Method:"GET",Path:"/healthz",Tags:[]string{"Platform"}},health("ok"));Register(r,huma.Operation{OperationID:"readiness",Method:"GET",Path:"/readyz",Tags:[]string{"Platform"}},func(ctx context.Context,_ *healthInput)(*healthOutput,error){if err:=readiness(ctx);err!=nil{return nil,fmt.Errorf("dependency unavailable: %w",err)};out:=&healthOutput{};out.Body.Status="ready";return out,nil})}

@@ -1,0 +1,30 @@
+-- name: CreateCMSPost :exec
+INSERT INTO cms_posts (id, organization_id, author_id, category_id, slug, title, body, status, created_at, updated_at)
+{{if eq .Database "postgres"}}
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+{{else}}
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+{{end}}
+
+-- name: GetCMSPost :one
+SELECT id, organization_id, author_id, category_id, slug, title, body, status, published_at, created_at, updated_at
+FROM cms_posts WHERE organization_id = {{if eq .Database "postgres"}}$1 AND id = $2{{else}}? AND id = ?{{end}};
+
+-- name: ListCMSPostsAfter :many
+SELECT id, organization_id, author_id, category_id, slug, title, body, status, published_at, created_at, updated_at
+FROM cms_posts
+WHERE organization_id = {{if eq .Database "postgres"}}$1 AND (created_at < $2 OR (created_at = $3 AND id < $4))
+ORDER BY created_at DESC, id DESC LIMIT $5{{else}}? AND (created_at < ? OR (created_at = ? AND id < ?))
+ORDER BY created_at DESC, id DESC LIMIT ?{{end}};
+
+-- name: UpdateCMSPostStatus :exec
+UPDATE cms_posts SET status = {{if eq .Database "postgres"}}$1, published_at = $2, updated_at = $3 WHERE organization_id = $4 AND id = $5{{else}}?, published_at = ?, updated_at = ? WHERE organization_id = ? AND id = ?{{end}};
+
+-- name: CreateCMSCategory :exec
+INSERT INTO cms_categories (id, organization_id, name, slug, created_at, updated_at) VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6{{else}}?, ?, ?, ?, ?, ?{{end}});
+
+-- name: CreateCMSTag :exec
+INSERT INTO cms_tags (id, organization_id, name, slug, created_at, updated_at) VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6{{else}}?, ?, ?, ?, ?, ?{{end}});
+
+-- name: AttachCMSTag :exec
+INSERT INTO cms_post_tags (organization_id, post_id, tag_id, created_at) VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}});

@@ -1,0 +1,65 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"flag"
+	"fmt"
+	"os"
+{{if eq .Database "postgres"}}	_ "github.com/jackc/pgx/v5/stdlib"
+{{else}}	_ "github.com/go-sql-driver/mysql"
+{{end}})
+
+func main() {
+	profile := flag.String("profile", "{{.Seed}}", "none, minimal, or demo")
+	flag.Parse()
+	if *profile == "none" { fmt.Println("seed profile none selected"); return }
+	if *profile != "minimal" && *profile != "demo" { panic("unsupported seed profile: " + *profile) }
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" { panic("DATABASE_URL is required") }
+	const driver = "{{if eq .Database "postgres"}}pgx{{else}}mysql{{end}}"
+	db, err := sql.Open(driver, dsn)
+	if err != nil { panic(err) }
+	defer db.Close()
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil { panic(err) }
+	defer tx.Rollback()
+	statements := minimalStatements()
+	if *profile == "demo" { statements = append(statements, demoStatements()...) }
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil { panic(fmt.Errorf("seed statement: %w", err)) }
+	}
+	if err := tx.Commit(); err != nil { panic(err) }
+	fmt.Printf("seed profile %s applied idempotently\n", *profile)
+}
+
+func minimalStatements() []string {
+	return []string{
+{{if .Auth}}{{if eq .Database "postgres"}}		`INSERT INTO users(id,email,display_name) VALUES ('00000000-0000-0000-0000-000000000001','owner@example.test','Demo Owner') ON CONFLICT DO NOTHING`,
+		`INSERT INTO organizations(id,name) VALUES ('00000000-0000-0000-0000-000000000002','Demo Organization') ON CONFLICT DO NOTHING`,
+		`INSERT INTO memberships(organization_id,user_id) VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING`,
+{{if .RBAC}}		`INSERT INTO roles(id,organization_id,name) VALUES ('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000002','owner') ON CONFLICT DO NOTHING`,
+		`INSERT INTO permissions(id,name,description) VALUES ('00000000-0000-0000-0000-000000000004','platform.admin','Full demo administration') ON CONFLICT DO NOTHING`,
+		`INSERT INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004') ON CONFLICT DO NOTHING`,
+		`INSERT INTO membership_roles(organization_id,user_id,role_id) VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003') ON CONFLICT DO NOTHING`,
+{{end}}{{else}}		`INSERT IGNORE INTO users(id,email,display_name) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000001','-','')),'owner@example.test','Demo Owner')`,
+		`INSERT IGNORE INTO organizations(id,name) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),'Demo Organization')`,
+		`INSERT IGNORE INTO memberships(organization_id,user_id) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000001','-','')))`,
+{{if .RBAC}}		`INSERT IGNORE INTO roles(id,organization_id,name) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000003','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),'owner')`,
+		`INSERT IGNORE INTO permissions(id,name,description) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000004','-','')),'platform.admin','Full demo administration')`,
+		`INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000003','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000004','-','')))`,
+		`INSERT IGNORE INTO membership_roles(organization_id,user_id,role_id) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000001','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000003','-','')))`,
+{{end}}{{end}}{{end}}	}
+}
+
+func demoStatements() []string {
+	return []string{
+{{if .CMS}}{{if eq .Database "postgres"}}		`INSERT INTO cms_categories(id,organization_id,name,slug) VALUES ('00000000-0000-0000-0000-000000000020','00000000-0000-0000-0000-000000000002','News','news') ON CONFLICT DO NOTHING`,
+		`INSERT INTO cms_posts(id,organization_id,author_id,category_id,slug,title,body,status) VALUES ('00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000020','welcome','Welcome','Generated demo content','draft') ON CONFLICT DO NOTHING`,
+{{else}}		`INSERT IGNORE INTO cms_categories(id,organization_id,name,slug) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000020','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),'News','news')`,
+		`INSERT IGNORE INTO cms_posts(id,organization_id,author_id,category_id,slug,title,body,status) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000021','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000001','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000020','-','')),'welcome','Welcome','Generated demo content','draft')`,
+{{end}}{{end}}{{if .CRM}}{{if eq .Database "postgres"}}		`INSERT INTO crm_companies(id,organization_id,name) VALUES ('00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000002','Acme Demo') ON CONFLICT DO NOTHING`,
+{{else}}		`INSERT IGNORE INTO crm_companies(id,organization_id,name) VALUES (UNHEX(REPLACE('00000000-0000-0000-0000-000000000030','-','')),UNHEX(REPLACE('00000000-0000-0000-0000-000000000002','-','')),'Acme Demo')`,
+{{end}}{{end}}	}
+}

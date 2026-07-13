@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE refresh_tokens (id binary(16) PRIMARY KEY, family_id binary(16) NOT NULL, token_hash binary(32) NOT NULL UNIQUE, created_at timestamp(6) NOT NULL, expires_at timestamp(6) NOT NULL, used_at timestamp(6) NULL, FOREIGN KEY (family_id) REFERENCES refresh_token_families(id));
+-- +goose Down
+DROP TABLE refresh_tokens;

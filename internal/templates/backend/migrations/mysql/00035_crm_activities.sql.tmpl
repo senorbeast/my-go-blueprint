@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE crm_activities (id BINARY(16) PRIMARY KEY, organization_id BINARY(16) NOT NULL, deal_id BINARY(16) NOT NULL, kind VARCHAR(80) NOT NULL, note TEXT NOT NULL, occurred_at TIMESTAMP(6) NOT NULL, created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY crm_activities_tenant_id (organization_id, id), KEY crm_activities_tenant_occurred_idx (organization_id, occurred_at, id), CONSTRAINT crm_activities_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE, CONSTRAINT crm_activities_deal_fk FOREIGN KEY (organization_id, deal_id) REFERENCES crm_deals(organization_id, id) ON DELETE CASCADE);
+-- +goose Down
+DROP TABLE crm_activities;

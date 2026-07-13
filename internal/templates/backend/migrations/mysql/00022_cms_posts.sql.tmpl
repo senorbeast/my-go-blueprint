@@ -1,0 +1,22 @@
+-- +goose Up
+CREATE TABLE cms_posts (
+  id binary(16) PRIMARY KEY,
+  organization_id binary(16) NOT NULL,
+  author_id binary(16) NOT NULL,
+  category_id binary(16),
+  slug varchar(200) NOT NULL,
+  title varchar(240) NOT NULL,
+  body longtext NOT NULL,
+  status enum('draft','published','archived') NOT NULL DEFAULT 'draft',
+  published_at timestamp(6) NULL,
+  created_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY cms_posts_tenant_slug (organization_id, slug),
+  KEY cms_posts_cursor_idx (organization_id, created_at, id),
+  KEY cms_posts_status_idx (organization_id, status, created_at, id),
+  CONSTRAINT cms_posts_organization_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  CONSTRAINT cms_posts_author_fk FOREIGN KEY (author_id) REFERENCES users(id),
+  CONSTRAINT cms_posts_category_fk FOREIGN KEY (category_id) REFERENCES cms_categories(id) ON DELETE SET NULL
+);
+-- +goose Down
+DROP TABLE cms_posts;

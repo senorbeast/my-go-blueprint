@@ -1,0 +1,14 @@
+import { create } from "zustand";
+
+type AuthUIState = {
+  activeOrganizationId?: string;
+  permissions: readonly string[];
+  setActiveOrganization: (id?: string) => void;
+  setPermissions: (permissions: readonly string[]) => void;
+};
+export const useAuthUI = create<AuthUIState>((set) => ({
+  activeOrganizationId: undefined,
+  permissions: [],
+  setActiveOrganization: (activeOrganizationId) => set({ activeOrganizationId }),
+  setPermissions: (permissions) => set({ permissions }),
+}));

@@ -1,0 +1,11 @@
+package organizations
+
+import (
+	httpadapter "{{.Module}}/backend/internal/features/organizations/adapters/http"
+	"{{.Module}}/backend/internal/features/organizations/application"
+)
+
+type Feature struct {
+	Service *application.Service
+	Routes  httpadapter.Routes
+}

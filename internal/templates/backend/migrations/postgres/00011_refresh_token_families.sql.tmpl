@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE refresh_token_families (id uuid PRIMARY KEY, session_id uuid NOT NULL REFERENCES sessions(id), created_at timestamptz NOT NULL, revoked_at timestamptz NULL);
+-- +goose Down
+DROP TABLE refresh_token_families;

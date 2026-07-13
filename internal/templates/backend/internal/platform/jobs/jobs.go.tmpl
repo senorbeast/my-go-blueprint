@@ -1,0 +1,52 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+)
+
+type ID string
+type Name string
+type Job struct {
+	Name           Name
+	Version        uint16
+	Payload        json.RawMessage
+	IdempotencyKey string
+	MaxAttempts    uint16
+}
+type Queue interface {
+	Enqueue(context.Context, Job) (ID, error)
+	EnqueueAt(context.Context, Job, time.Time) (ID, error)
+}
+type Handler interface {
+	Handle(context.Context, Job) error
+}
+
+type Registry struct {
+	mu       sync.RWMutex
+	handlers map[Name]Handler
+}
+
+func NewRegistry() *Registry { return &Registry{handlers: make(map[Name]Handler)} }
+func (r *Registry) Register(name Name, handler Handler) error {
+	if name == "" || handler == nil {
+		return fmt.Errorf("job name and handler are required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.handlers[name]; exists {
+		return fmt.Errorf("job handler %q is already registered", name)
+	}
+	r.handlers[name] = handler
+	return nil
+}
+func (r *Registry) Handler(name Name) (Handler, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	handler, ok := r.handlers[name]
+	return handler, ok
+}
+func (r *Registry) Count() int { r.mu.RLock(); defer r.mu.RUnlock(); return len(r.handlers) }

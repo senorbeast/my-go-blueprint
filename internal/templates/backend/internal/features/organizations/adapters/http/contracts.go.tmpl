@@ -1,0 +1,20 @@
+package http
+
+type CreateOrganizationInput struct {
+	Body struct {
+		Name string `json:"name" minLength:"1" maxLength:"160"`
+	}
+}
+type OrganizationBody struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+type CreateOrganizationOutput struct{ Body OrganizationBody }
+type AssignRoleInput struct {
+	OrganizationID string `path:"organizationID"`
+	UserID         string `path:"userID"`
+	Body           struct {
+		RoleID string `json:"roleId"`
+	}
+}
+type AssignRoleOutput struct{}

@@ -1,0 +1,10 @@
+package errors
+
+import "fmt"
+type Kind string
+const ( Validation Kind="validation"; Unauthenticated Kind="unauthenticated"; Forbidden Kind="forbidden"; NotFound Kind="not_found"; Conflict Kind="conflict"; RateLimited Kind="rate_limited"; Unavailable Kind="unavailable"; Internal Kind="internal" )
+type Error struct { Kind Kind; Code, Message string; Cause error; Fields map[string]string }
+func (e *Error) Error() string { if e.Cause != nil { return fmt.Sprintf("%s: %v",e.Message,e.Cause) }; return e.Message }
+func (e *Error) Unwrap() error { return e.Cause }
+func New(kind Kind, code, message string) *Error { return &Error{Kind:kind,Code:code,Message:message} }
+

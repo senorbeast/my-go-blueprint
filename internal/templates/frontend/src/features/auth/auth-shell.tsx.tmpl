@@ -1,0 +1,15 @@
+import { useQuery } from "@tanstack/react-query";
+import "@/shared/api/client";
+
+type CurrentUser = { id: string; email: string };
+async function currentUser(): Promise<CurrentUser> {
+  const response = await fetch("/api/v1/auth/me", { credentials: "include" });
+  if (!response.ok) throw new Error(response.status === 401 ? "Unauthenticated" : "Unable to load session");
+  return response.json() as Promise<CurrentUser>;
+}
+export function AuthShell() {
+  const user = useQuery({ queryKey: ["auth", "me"], queryFn: currentUser, retry: false });
+  if (user.isPending) return <main className="p-8">Loading session…</main>;
+  if (user.isError) return <main className="mx-auto max-w-md p-8"><h1 className="text-2xl font-semibold">Welcome</h1><p className="mt-2 text-slate-600">Sign in to continue.</p></main>;
+  return <main className="p-8"><h1 className="text-2xl font-semibold">Dashboard</h1><p className="mt-2 text-slate-600">Signed in as {user.data.email}</p></main>;
+}

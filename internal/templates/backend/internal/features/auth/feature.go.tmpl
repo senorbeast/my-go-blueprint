@@ -1,0 +1,13 @@
+package auth
+
+import (
+	httpadapter "{{.Module}}/backend/internal/features/auth/adapters/http"
+	"{{.Module}}/backend/internal/features/auth/application"
+)
+
+// Feature is intentionally transport-neutral; bootstrap supplies the cookie
+// policy and registers the HTTP adapter only when auth is selected.
+type Feature struct {
+	Service *application.Service
+	Routes  httpadapter.Routes
+}

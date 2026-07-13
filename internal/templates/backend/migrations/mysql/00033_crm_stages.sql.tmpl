@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE crm_stages (id BINARY(16) PRIMARY KEY, organization_id BINARY(16) NOT NULL, pipeline_id BINARY(16) NOT NULL, name VARCHAR(200) NOT NULL, position INT NOT NULL, created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY crm_stages_tenant_id (organization_id, id), UNIQUE KEY crm_stages_pipeline_position (pipeline_id, position), CONSTRAINT crm_stages_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE, CONSTRAINT crm_stages_pipeline_fk FOREIGN KEY (organization_id, pipeline_id) REFERENCES crm_pipelines(organization_id, id) ON DELETE CASCADE, CHECK (position >= 0));
+-- +goose Down
+DROP TABLE crm_stages;

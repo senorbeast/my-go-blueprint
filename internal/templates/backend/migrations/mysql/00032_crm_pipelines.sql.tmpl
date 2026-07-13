@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE crm_pipelines (id BINARY(16) PRIMARY KEY, organization_id BINARY(16) NOT NULL, name VARCHAR(200) NOT NULL, created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY crm_pipelines_tenant_id (organization_id, id), UNIQUE KEY crm_pipelines_tenant_name (organization_id, name), CONSTRAINT crm_pipelines_org_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE);
+-- +goose Down
+DROP TABLE crm_pipelines;

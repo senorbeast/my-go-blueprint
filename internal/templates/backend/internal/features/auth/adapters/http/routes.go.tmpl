@@ -1,0 +1,48 @@
+package http
+
+import (
+	"context"
+
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/features/auth/application"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+)
+
+type CookiePolicy interface {
+	SessionCookies(application.Tokens) []string
+	ClearSessionCookies() []string
+}
+type Routes struct {
+	service *application.Service
+	cookies CookiePolicy
+}
+
+func New(service *application.Service, cookies CookiePolicy) Routes {
+	return Routes{service: service, cookies: cookies}
+}
+func (Routes) Descriptor() httpplatform.Descriptor {
+	return httpplatform.Descriptor{Prefix: "/api/v1/auth", Tags: []string{"Authentication"}, Authentication: httpplatform.Optional}
+}
+func (r Routes) Register(reg httpplatform.Registrar) error {
+	httpplatform.Register(reg, huma.Operation{OperationID: "refresh-session", Method: "POST", Path: "/api/v1/auth/refresh", Tags: []string{"Authentication"}}, func(ctx context.Context, in *RefreshInput) (*RefreshOutput, error) {
+		tokens, err := r.service.Rotate(ctx, in.RefreshToken)
+		if err != nil {
+			return nil, err
+		}
+		out := &RefreshOutput{SetCookie: r.cookies.SessionCookies(tokens)}
+		out.Body.AccessExpiresAt = tokens.AccessExpiry
+		out.Body.RefreshExpiresAt = tokens.RefreshExpiry
+		return out, nil
+	})
+	httpplatform.Register(reg, huma.Operation{OperationID: "logout-session", Method: "POST", Path: "/api/v1/auth/logout", Tags: []string{"Authentication"}}, func(ctx context.Context, _ *LogoutInput) (*LogoutOutput, error) {
+		principal, ok := platformauth.PrincipalFrom(ctx)
+		if ok {
+			if err := r.service.Logout(ctx, principal); err != nil {
+				return nil, err
+			}
+		}
+		return &LogoutOutput{SetCookie: r.cookies.ClearSessionCookies()}, nil
+	})
+	return nil
+}

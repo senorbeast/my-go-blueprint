@@ -1,0 +1,10 @@
+package authorization
+
+import (
+	"context"
+	"{{.Module}}/backend/internal/platform/auth"
+)
+type Permission string
+type Resource struct { Kind, ID string; OrganizationID auth.OrganizationID; OwnerID auth.UserID }
+type Authorizer interface { Authorize(context.Context,auth.Principal,Permission,Resource) error }
+

@@ -1,0 +1,38 @@
+package bootstrap
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
+	"{{.Module}}/backend/internal/platform/config"
+	"{{.Module}}/backend/internal/platform/database"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+)
+
+type Application struct { config config.Config; logger *zap.Logger; database *database.DB; server *echo.Echo }
+
+func New(_ context.Context) (*Application, error) {
+	cfg, err := config.Load()
+	if err != nil { return nil, err }
+	logger, err := zap.NewProduction()
+	if err != nil { return nil, err }
+	db, err := database.Open(context.Background(), cfg.DatabaseURL)
+	if err != nil { _ = logger.Sync(); return nil, err }
+	e := echo.New()
+	httpplatform.InstallMiddleware(e, logger, cfg)
+	httpplatform.NewRegistrar(e).PlatformRoutes(db.Ping)
+	// Construct repositories, services, and feature route adapters here.
+	return &Application{cfg, logger, db, e}, nil
+}
+
+func (a *Application) Run(ctx context.Context) error {
+	defer a.logger.Sync() //nolint:errcheck
+	defer a.database.Close() //nolint:errcheck
+	go func() { <-ctx.Done(); shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second); defer cancel(); _ = a.server.Shutdown(shutdown) }()
+	err := a.server.Start(a.config.HTTPAddress)
+	if errors.Is(err, http.ErrServerClosed) { return nil }
+	return err
+}

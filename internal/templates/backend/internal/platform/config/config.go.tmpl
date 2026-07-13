@@ -1,0 +1,20 @@
+package config
+
+import (
+	"errors"
+	"os"
+	"strings"
+)
+
+type Config struct { Environment, HTTPAddress, DatabaseURL, LogLevel, CursorSecret, JWTSecret string; CookieSecure bool; CORSOrigins []string }
+
+func Load() (Config, error) {
+	c := Config{Environment:value("APP_ENV","development"), HTTPAddress:value("HTTP_ADDRESS",":8080"), DatabaseURL:os.Getenv("DATABASE_URL"), LogLevel:value("LOG_LEVEL","info"), CursorSecret:os.Getenv("CURSOR_SECRET"), JWTSecret:os.Getenv("JWT_SECRET"), CookieSecure:os.Getenv("COOKIE_SECURE")=="true", CORSOrigins:split(value("CORS_ORIGINS","http://localhost:5173"))}
+	if c.DatabaseURL == "" { return Config{}, errors.New("DATABASE_URL is required") }
+	if len(c.CursorSecret) < 32 { return Config{}, errors.New("CURSOR_SECRET must be at least 32 bytes") }
+{{if .Auth}}	if len(c.JWTSecret) < 32 { return Config{}, errors.New("JWT_SECRET must be at least 32 bytes") }
+{{end}}	if len(c.CORSOrigins) == 0 { return Config{}, errors.New("at least one CORS origin is required") }
+	return c, nil
+}
+func value(k, fallback string) string { if v:=os.Getenv(k); v!="" { return v }; return fallback }
+func split(v string) []string { var out []string; for _, x := range strings.Split(v,",") { if x=strings.TrimSpace(x); x!="" { out=append(out,x) } }; return out }

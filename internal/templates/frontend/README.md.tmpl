@@ -1,0 +1,11 @@
+# {{ .Name }} frontend
+
+Requires Node LTS and pnpm. The API should listen on `http://localhost:8080`.
+
+```sh
+pnpm install
+pnpm api:generate
+pnpm dev
+```
+
+Run `pnpm test`, `pnpm typecheck`, `pnpm build`, and `pnpm test:e2e` for verification. TanStack Query owns server state; Zustand is reserved for client-only UI state. Never edit `src/shared/api/generated` manually.

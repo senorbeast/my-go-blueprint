@@ -1,0 +1,54 @@
+package application
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"{{.Module}}/backend/internal/features/cms/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type IDGenerator interface { New() string }
+type Clock interface { Now() time.Time }
+type Service struct { repo domain.Repository; authz authorization.Authorizer; ids IDGenerator; clock Clock }
+func New(repo domain.Repository, authz authorization.Authorizer, ids IDGenerator, clock Clock) *Service { return &Service{repo: repo, authz: authz, ids: ids, clock: clock} }
+
+type CreatePost struct { Slug, Title, Body string; CategoryID *domain.CategoryID; TagIDs []domain.TagID }
+func (s *Service) CreatePost(ctx context.Context, p auth.Principal, cmd CreatePost) (domain.Post, error) {
+	if err := s.authorize(ctx, p, domain.PermissionCreate, "post"); err != nil { return domain.Post{}, err }
+	slug, err := domain.NewSlug(cmd.Slug); if err != nil { return domain.Post{}, err }
+	now := s.clock.Now()
+	post := domain.Post{ID: domain.PostID(s.ids.New()), OrganizationID: domain.OrganizationID(p.OrganizationID), AuthorID: domain.UserID(p.UserID), CategoryID: cmd.CategoryID, Slug: slug, Title: strings.TrimSpace(cmd.Title), Body: strings.TrimSpace(cmd.Body), Status: domain.PostDraft, CreatedAt: now, UpdatedAt: now}
+	if post.Title == "" { return domain.Post{}, domain.ErrInvalidContent }
+	return post, s.repo.CreatePost(ctx, post, cmd.TagIDs)
+}
+
+func (s *Service) ListPosts(ctx context.Context, p auth.Principal, filter domain.PostFilter, page pagination.Request) (pagination.Page[domain.Post], error) {
+	if err := s.authorize(ctx, p, domain.PermissionView, "post"); err != nil { return pagination.Page[domain.Post]{}, err }
+	return s.repo.ListPosts(ctx, domain.PostListQuery{OrganizationID: domain.OrganizationID(p.OrganizationID), Filter: filter, Page: page})
+}
+
+func (s *Service) PublishPost(ctx context.Context, p auth.Principal, id domain.PostID) (domain.Post, error) {
+	if err := s.authorize(ctx, p, domain.PermissionPublish, "post"); err != nil { return domain.Post{}, err }
+	post, err := s.repo.FindPost(ctx, domain.OrganizationID(p.OrganizationID), id); if err != nil { return domain.Post{}, err }
+	if err = post.Publish(s.clock.Now()); err != nil { return domain.Post{}, err }
+	return post, s.repo.SavePost(ctx, post)
+}
+
+type CreateTaxonomy struct { Name, Slug string }
+func (s *Service) CreateCategory(ctx context.Context, p auth.Principal, cmd CreateTaxonomy) (domain.Category, error) {
+	if err := s.authorize(ctx, p, domain.PermissionTaxonomies, "category"); err != nil { return domain.Category{}, err }
+	slug, err := domain.NewSlug(cmd.Slug); if err != nil { return domain.Category{}, err }
+	value := domain.Category{ID: domain.CategoryID(s.ids.New()), OrganizationID: domain.OrganizationID(p.OrganizationID), Name: strings.TrimSpace(cmd.Name), Slug: slug}
+	if value.Name == "" { return domain.Category{}, domain.ErrInvalidContent }; return value, s.repo.CreateCategory(ctx, value)
+}
+func (s *Service) CreateTag(ctx context.Context, p auth.Principal, cmd CreateTaxonomy) (domain.Tag, error) {
+	if err := s.authorize(ctx, p, domain.PermissionTaxonomies, "tag"); err != nil { return domain.Tag{}, err }
+	slug, err := domain.NewSlug(cmd.Slug); if err != nil { return domain.Tag{}, err }
+	value := domain.Tag{ID: domain.TagID(s.ids.New()), OrganizationID: domain.OrganizationID(p.OrganizationID), Name: strings.TrimSpace(cmd.Name), Slug: slug}
+	if value.Name == "" { return domain.Tag{}, domain.ErrInvalidContent }; return value, s.repo.CreateTag(ctx, value)
+}
+func (s *Service) authorize(ctx context.Context, p auth.Principal, permission, kind string) error { return s.authz.Authorize(ctx, p, authorization.Permission(permission), authorization.Resource{Kind: kind, OrganizationID: p.OrganizationID}) }

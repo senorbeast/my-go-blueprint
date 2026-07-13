@@ -1,0 +1,29 @@
+package http
+
+import (
+	"context"
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/features/crm/application"
+	"{{.Module}}/backend/internal/features/crm/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type Routes struct { service *application.Service }
+func New(service *application.Service) Routes { return Routes{service: service} }
+func (Routes) Descriptor() httpplatform.Descriptor { return httpplatform.Descriptor{Prefix: "/api/v1/organizations/{organizationID}/crm", Tags: []string{"CRM"}, Authentication: httpplatform.Required} }
+type listInput struct { Limit uint16 `query:"limit" minimum:"1" maximum:"100" default:"20"`; Cursor string `query:"cursor"` }
+type listOutput struct { Body any }
+func (r Routes) list(kind domain.EntityKind) func(context.Context, *listInput) (*listOutput, error) { return func(ctx context.Context, input *listInput) (*listOutput, error) { principal, _ := auth.PrincipalFrom(ctx); limit, err := pagination.NewLimit(input.Limit); if err != nil { return nil, err }; page, err := r.service.List(ctx, principal, kind, pagination.Request{Cursor: input.Cursor, Limit: limit}); if err != nil { return nil, err }; return &listOutput{Body: page}, nil } }
+func (r Routes) Register(reg httpplatform.Registrar) error {
+	base := "/api/v1/organizations/{organizationID}/crm/"
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-companies", Method: "GET", Path: base+"companies", Tags: []string{"CRM"}}, r.list(domain.Companies))
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-contacts", Method: "GET", Path: base+"contacts", Tags: []string{"CRM"}}, r.list(domain.Contacts))
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-pipelines", Method: "GET", Path: base+"pipelines", Tags: []string{"CRM"}}, r.list(domain.Pipelines))
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-stages", Method: "GET", Path: base+"stages", Tags: []string{"CRM"}}, r.list(domain.Stages))
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-deals", Method: "GET", Path: base+"deals", Tags: []string{"CRM"}}, r.list(domain.Deals))
+	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-activities", Method: "GET", Path: base+"activities", Tags: []string{"CRM"}}, r.list(domain.Activities))
+	return nil
+}
+

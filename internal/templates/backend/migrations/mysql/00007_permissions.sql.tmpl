@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE permissions (id binary(16) PRIMARY KEY, name varchar(160) NOT NULL UNIQUE, description text NOT NULL);
+-- +goose Down
+DROP TABLE permissions;

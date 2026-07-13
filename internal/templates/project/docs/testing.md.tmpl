@@ -1,0 +1,9 @@
+# Testing
+
+- Domain/application tests use public interfaces and in-memory adapters at real seams.
+- Repository tests run real {{.Database}} migrations and sqlc queries through Testcontainers.
+- HTTP tests exercise the composed Echo/Huma application.
+- Frontend tests use Vitest/Testing Library; browser flows use Playwright.
+- `make verify-generated` is the local and acceptance-harness entrypoint.
+
+Seed profiles are deterministic and idempotent. Run a selected profile twice in integration tests and verify behavior through authenticated public routes.

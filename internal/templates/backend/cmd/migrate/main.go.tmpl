@@ -1,0 +1,26 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+{{if eq .Database "postgres"}}	_ "github.com/jackc/pgx/v5/stdlib"
+{{else}}	_ "github.com/go-sql-driver/mysql"
+{{end}}	"github.com/pressly/goose/v3"
+)
+
+func main() {
+	if len(os.Args) != 2 { panic("usage: migrate <up|down|down-to|reset|status>") }
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" { panic("DATABASE_URL is required") }
+	const driver = "{{if eq .Database "postgres"}}pgx{{else}}mysql{{end}}"
+	db, err := sql.Open(driver, dsn)
+	if err != nil { panic(err) }
+	defer db.Close()
+	if err := db.PingContext(context.Background()); err != nil { panic(err) }
+	if err := goose.SetDialect("{{.Database}}"); err != nil { panic(err) }
+	if err := goose.RunContext(context.Background(), os.Args[1], db, "migrations"); err != nil {
+		panic(fmt.Errorf("migrate %s: %w", os.Args[1], err))
+	}
+}

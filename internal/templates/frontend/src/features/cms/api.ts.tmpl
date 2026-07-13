@@ -1,0 +1,11 @@
+import type { CursorPage, CMSPost, PostListOptions } from "./contracts";
+
+export async function listCMSPosts(options: PostListOptions): Promise<CursorPage<CMSPost>> {
+  const query = new URLSearchParams();
+  if (options.cursor) query.set("cursor", options.cursor);
+  if (options.status) query.set("status", options.status);
+  query.set("limit", String(options.limit ?? 20));
+  const response = await fetch(`/api/v1/organizations/${encodeURIComponent(options.organizationId)}/cms/posts?${query}`, { credentials: "include" });
+  if (!response.ok) throw new Error(`Unable to load CMS posts (${response.status})`);
+  return response.json() as Promise<CursorPage<CMSPost>>;
+}

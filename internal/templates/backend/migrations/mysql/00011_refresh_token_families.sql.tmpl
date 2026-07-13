@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE refresh_token_families (id binary(16) PRIMARY KEY, session_id binary(16) NOT NULL, created_at timestamp(6) NOT NULL, revoked_at timestamp(6) NULL, FOREIGN KEY (session_id) REFERENCES sessions(id));
+-- +goose Down
+DROP TABLE refresh_token_families;

@@ -1,0 +1,37 @@
+package http
+
+import (
+	"context"
+
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/features/organizations/application"
+	"{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+)
+
+type Routes struct{ service *application.Service }
+
+func New(service *application.Service) Routes { return Routes{service: service} }
+func (Routes) Descriptor() httpplatform.Descriptor {
+	return httpplatform.Descriptor{Prefix: "/api/v1/organizations", Tags: []string{"Organizations"}, Authentication: httpplatform.Required}
+}
+func (r Routes) Register(reg httpplatform.Registrar) error {
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-organization", Method: "POST", Path: "/api/v1/organizations", Tags: []string{"Organizations"}}, func(ctx context.Context, in *CreateOrganizationInput) (*CreateOrganizationOutput, error) {
+		principal, _ := platformauth.PrincipalFrom(ctx)
+		organization, err := r.service.Create(ctx, principal, in.Body.Name)
+		if err != nil {
+			return nil, err
+		}
+		return &CreateOrganizationOutput{Body: OrganizationBody{ID: string(organization.ID), Name: organization.Name}}, nil
+	})
+	httpplatform.Register(reg, huma.Operation{OperationID: "assign-organization-role", Method: "PUT", Path: "/api/v1/organizations/{organizationID}/members/{userID}/role", Tags: []string{"Organizations"}}, func(ctx context.Context, in *AssignRoleInput) (*AssignRoleOutput, error) {
+		principal, _ := platformauth.PrincipalFrom(ctx)
+		principal.OrganizationID = platformauth.OrganizationID(in.OrganizationID)
+		if err := r.service.AssignRole(ctx, principal, platformauth.UserID(in.UserID), domain.RoleID(in.Body.RoleID)); err != nil {
+			return nil, err
+		}
+		return &AssignRoleOutput{}, nil
+	})
+	return nil
+}

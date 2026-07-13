@@ -1,0 +1,31 @@
+import { client } from "./generated/client.gen";
+
+{{if .Auth}}let refreshInFlight: Promise<void> | undefined;
+{{end}}
+function csrfHeaders(): Record<string, string> {
+  const token = document.cookie.split("; ").find((entry) => entry.startsWith("csrf_token="))?.slice("csrf_token=".length);
+  return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
+}
+{{if .Auth}}async function refresh(): Promise<void> {
+  const response = await fetch("/api/v1/auth/refresh", { method: "POST", credentials: "include", headers: csrfHeaders() });
+  if (!response.ok) throw new Error("Session refresh failed");
+}
+{{end}}
+
+client.setConfig({ baseUrl: "/api/v1", credentials: "include" });
+client.interceptors.request.use((request: Request) => {
+  for (const [name, value] of Object.entries(csrfHeaders())) request.headers.set(name, value);
+  return request;
+});
+{{if .Auth}}
+client.interceptors.response.use(async (response: Response, request: Request) => {
+  if (response.status !== 401 || request.headers.has("X-Refresh-Retry")) return response;
+  refreshInFlight ??= refresh().finally(() => { refreshInFlight = undefined; });
+  await refreshInFlight;
+  const retry = new Request(request, { headers: new Headers(request.headers) });
+  retry.headers.set("X-Refresh-Retry", "1");
+  return fetch(retry);
+});
+{{end}}
+
+export { client };

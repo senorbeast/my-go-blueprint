@@ -1,0 +1,4 @@
+-- +goose Up
+CREATE TABLE refresh_tokens (id uuid PRIMARY KEY, family_id uuid NOT NULL REFERENCES refresh_token_families(id), token_hash bytea NOT NULL UNIQUE, created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL, used_at timestamptz NULL);
+-- +goose Down
+DROP TABLE refresh_tokens;

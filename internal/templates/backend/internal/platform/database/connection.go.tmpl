@@ -1,0 +1,46 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	{{if eq .Database "postgres"}}_ "github.com/jackc/pgx/v5/stdlib"{{else}}_ "github.com/go-sql-driver/mysql"{{end}}
+)
+
+// DB owns the process-lifetime SQL handle. Repository adapters receive only
+// the query/transaction capability they need; bootstrap owns opening and
+// closing the handle.
+type DB struct{ sql *sql.DB }
+
+func Open(ctx context.Context, url string) (*DB, error) {
+	if url == "" {
+		return nil, fmt.Errorf("database URL is required")
+	}
+	driver := "{{if eq .Database "postgres"}}pgx{{else}}mysql{{end}}"
+	handle, err := sql.Open(driver, url)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	handle.SetConnMaxLifetime(30 * time.Minute)
+	handle.SetMaxOpenConns(20)
+	handle.SetMaxIdleConns(5)
+	db := &DB{sql: handle}
+	if err := db.Ping(ctx); err != nil {
+		_ = handle.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func (d *DB) SQL() *sql.DB { return d.sql }
+
+func (d *DB) Ping(ctx context.Context) error {
+	if err := d.sql.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) Close() error { return d.sql.Close() }

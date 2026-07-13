@@ -1,0 +1,5 @@
+-- +goose Up
+CREATE TABLE crm_activities (id UUID PRIMARY KEY, organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, deal_id UUID NOT NULL, kind VARCHAR(80) NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (organization_id, id), FOREIGN KEY (organization_id, deal_id) REFERENCES crm_deals(organization_id, id) ON DELETE CASCADE);
+CREATE INDEX crm_activities_tenant_occurred_idx ON crm_activities (organization_id, occurred_at, id);
+-- +goose Down
+DROP TABLE crm_activities;

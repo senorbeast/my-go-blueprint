@@ -1,0 +1,32 @@
+package repository
+
+import (
+	"context"
+
+	"{{.Module}}/backend/internal/features/cms/domain"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+// Store is implemented by the dialect-specific sqlc adapter in the composition layer.
+// It keeps sqlc records from leaking into the domain contract.
+type Store interface {
+	CreatePost(context.Context, domain.Post, []domain.TagID) error
+	FindPost(context.Context, domain.OrganizationID, domain.PostID) (domain.Post, error)
+	ListPosts(context.Context, domain.PostListQuery) (pagination.Page[domain.Post], error)
+	SavePost(context.Context, domain.Post) error
+	CreateCategory(context.Context, domain.Category) error
+	ListCategories(context.Context, domain.TaxonomyListQuery) (pagination.Page[domain.Category], error)
+	CreateTag(context.Context, domain.Tag) error
+	ListTags(context.Context, domain.TaxonomyListQuery) (pagination.Page[domain.Tag], error)
+}
+type Repository struct { store Store }
+func New(store Store) *Repository { return &Repository{store: store} }
+func (r *Repository) CreatePost(c context.Context, v domain.Post, tags []domain.TagID) error { return r.store.CreatePost(c, v, tags) }
+func (r *Repository) FindPost(c context.Context, o domain.OrganizationID, id domain.PostID) (domain.Post, error) { return r.store.FindPost(c, o, id) }
+func (r *Repository) ListPosts(c context.Context, q domain.PostListQuery) (pagination.Page[domain.Post], error) { return r.store.ListPosts(c, q) }
+func (r *Repository) SavePost(c context.Context, v domain.Post) error { return r.store.SavePost(c, v) }
+func (r *Repository) CreateCategory(c context.Context, v domain.Category) error { return r.store.CreateCategory(c, v) }
+func (r *Repository) ListCategories(c context.Context, q domain.TaxonomyListQuery) (pagination.Page[domain.Category], error) { return r.store.ListCategories(c, q) }
+func (r *Repository) CreateTag(c context.Context, v domain.Tag) error { return r.store.CreateTag(c, v) }
+func (r *Repository) ListTags(c context.Context, q domain.TaxonomyListQuery) (pagination.Page[domain.Tag], error) { return r.store.ListTags(c, q) }
+var _ domain.Repository = (*Repository)(nil)
