@@ -2,16 +2,32 @@ package http
 
 import "time"
 
-type RefreshInput struct {
-	RefreshToken string `cookie:"refresh_token" required:"true"`
+type SignupInput struct {
+	Body struct {
+		Email            string `json:"email" format:"email"`
+		DisplayName      string `json:"displayName" minLength:"1" maxLength:"160"`
+		Password         string `json:"password" minLength:"8" maxLength:"1024"`
+		OrganizationName string `json:"organizationName" minLength:"1" maxLength:"160"`
+	}
 }
-type RefreshOutput struct {
+type LoginInput struct {
+	Body struct {
+		Email    string `json:"email" format:"email"`
+		Password string `json:"password" minLength:"1" maxLength:"1024"`
+	}
+}
+type SessionOutput struct {
 	SetCookie []string `header:"Set-Cookie"`
-	Body      struct {
+	Body struct {
 		AccessExpiresAt  time.Time `json:"accessExpiresAt"`
 		RefreshExpiresAt time.Time `json:"refreshExpiresAt"`
 	}
 }
+
+type RefreshInput struct {
+	RefreshToken string `cookie:"refresh_token" required:"true"`
+}
+type RefreshOutput = SessionOutput
 
 type LogoutInput struct {
 	RefreshToken string `cookie:"refresh_token"`

@@ -1,0 +1,19 @@
+-- The bucket is a single, database-shared admission counter for a scope,
+-- subject, operation, and active window. The conditional upsert makes the
+-- limit check and increment one atomic database operation.
+
+-- name: IncrementRateLimitBucket :execrows
+INSERT INTO rate_limit_buckets (key_hash, bucket_at, hits, expires_at)
+VALUES ({{if eq .Database "postgres"}}sqlc.arg(key_hash), sqlc.arg(bucket_at), 1, sqlc.arg(expires_at){{else}}sqlc.arg(key_hash), sqlc.arg(bucket_at), 1, sqlc.arg(expires_at){{end}})
+{{if eq .Database "postgres"}}ON CONFLICT (key_hash, bucket_at) DO UPDATE
+SET hits = CASE WHEN rate_limit_buckets.expires_at <= sqlc.arg(now) THEN 1 ELSE rate_limit_buckets.hits + 1 END,
+    expires_at = CASE WHEN rate_limit_buckets.expires_at <= sqlc.arg(now) THEN EXCLUDED.expires_at ELSE rate_limit_buckets.expires_at END
+WHERE rate_limit_buckets.expires_at <= sqlc.arg(now) OR rate_limit_buckets.hits < sqlc.arg(max_hits){{else}}ON DUPLICATE KEY UPDATE
+hits = IF(expires_at <= sqlc.arg(now) OR hits < sqlc.arg(max_hits), IF(expires_at <= sqlc.arg(now), 1, hits + 1), hits),
+expires_at = IF(expires_at <= sqlc.arg(now), VALUES(expires_at), expires_at){{end}};
+
+-- name: GetRateLimitBucket :one
+SELECT hits, expires_at
+FROM rate_limit_buckets
+WHERE key_hash = sqlc.arg(key_hash)
+  AND bucket_at = sqlc.arg(bucket_at);

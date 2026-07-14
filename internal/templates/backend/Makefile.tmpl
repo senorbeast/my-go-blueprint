@@ -1,0 +1,7 @@
+.PHONY: sqlc verify
+
+sqlc:
+	go tool sqlc generate
+
+verify: sqlc
+	go test ./...

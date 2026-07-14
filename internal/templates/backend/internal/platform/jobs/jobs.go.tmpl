@@ -21,6 +21,20 @@ type Queue interface {
 	Enqueue(context.Context, Job) (ID, error)
 	EnqueueAt(context.Context, Job, time.Time) (ID, error)
 }
+// ClaimedJob is a job reserved for one worker until LeaseUntil. A worker must
+// settle it with Complete or Fail; an expired lease is claimable after restart.
+type ClaimedJob struct {
+	ID ID
+	Job
+	Attempts uint16
+	LeaseUntil time.Time
+}
+type Store interface {
+	Queue
+	Claim(context.Context, time.Time, time.Duration) (ClaimedJob, bool, error)
+	Complete(context.Context, ID) error
+	Fail(context.Context, ID, time.Time, error) error
+}
 type Handler interface {
 	Handle(context.Context, Job) error
 }
@@ -50,3 +64,50 @@ func (r *Registry) Handler(name Name) (Handler, bool) {
 	return handler, ok
 }
 func (r *Registry) Count() int { r.mu.RLock(); defer r.mu.RUnlock(); return len(r.handlers) }
+
+// Worker performs one durable-queue unit of work. SQL stores can implement the
+// same Store contract with transactional claim/lease statements; MemoryStore is
+// deliberately useful only for worker behavior tests and local wiring.
+type Worker struct { store Store; registry *Registry; lease time.Duration; now func() time.Time }
+func NewWorker(store Store, registry *Registry, lease time.Duration) *Worker {
+	return &Worker{store: store, registry: registry, lease: lease, now: time.Now}
+}
+func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
+	claimed, ok, err := w.store.Claim(ctx, w.now(), w.lease)
+	if err != nil || !ok { return ok, err }
+	handler, exists := w.registry.Handler(claimed.Name)
+	if !exists { return true, w.store.Fail(ctx, claimed.ID, w.now(), fmt.Errorf("no handler registered for job %q", claimed.Name)) }
+	if err := handler.Handle(ctx, claimed.Job); err != nil { return true, w.store.Fail(ctx, claimed.ID, w.now(), err) }
+	return true, w.store.Complete(ctx, claimed.ID)
+}
+
+type memoryRecord struct { ClaimedJob; state string; runAt time.Time; maxAttempts uint16; idempotencyKey string }
+type MemoryStore struct { mu sync.Mutex; records map[ID]*memoryRecord; keys map[string]ID; sequence uint64 }
+func NewMemoryStore() *MemoryStore { return &MemoryStore{records: map[ID]*memoryRecord{}, keys: map[string]ID{}} }
+func (s *MemoryStore) Enqueue(ctx context.Context, job Job) (ID, error) { return s.EnqueueAt(ctx, job, time.Now()) }
+func (s *MemoryStore) EnqueueAt(_ context.Context, job Job, at time.Time) (ID, error) {
+	if job.Name == "" { return "", fmt.Errorf("job name is required") }
+	if job.MaxAttempts == 0 { job.MaxAttempts = 1 }
+	s.mu.Lock(); defer s.mu.Unlock()
+	if job.IdempotencyKey != "" { if id, ok := s.keys[job.IdempotencyKey]; ok { return id, nil } }
+	s.sequence++; id := ID(fmt.Sprintf("job-%d", s.sequence))
+	s.records[id] = &memoryRecord{ClaimedJob: ClaimedJob{ID: id, Job: job}, state: "queued", runAt: at, maxAttempts: job.MaxAttempts, idempotencyKey: job.IdempotencyKey}
+	if job.IdempotencyKey != "" { s.keys[job.IdempotencyKey] = id }
+	return id, nil
+}
+func (s *MemoryStore) Claim(_ context.Context, now time.Time, lease time.Duration) (ClaimedJob, bool, error) {
+	s.mu.Lock(); defer s.mu.Unlock()
+	for _, record := range s.records {
+		if record.state == "running" && !record.LeaseUntil.After(now) { record.state = "queued" }
+		if record.state != "queued" || record.runAt.After(now) { continue }
+		record.state = "running"; record.Attempts++; record.LeaseUntil = now.Add(lease)
+		return record.ClaimedJob, true, nil
+	}
+	return ClaimedJob{}, false, nil
+}
+func (s *MemoryStore) Complete(_ context.Context, id ID) error {
+	s.mu.Lock(); defer s.mu.Unlock(); record, ok := s.records[id]; if !ok { return fmt.Errorf("job %q not found", id) }; if record.state != "running" { return fmt.Errorf("job %q is not running", id) }; record.state = "completed"; return nil
+}
+func (s *MemoryStore) Fail(_ context.Context, id ID, now time.Time, _ error) error {
+	s.mu.Lock(); defer s.mu.Unlock(); record, ok := s.records[id]; if !ok { return fmt.Errorf("job %q not found", id) }; if record.state != "running" { return fmt.Errorf("job %q is not running", id) }; if record.Attempts >= record.maxAttempts { record.state = "dead"; return nil }; record.state = "queued"; record.runAt = now; record.LeaseUntil = time.Time{}; return nil
+}

@@ -32,6 +32,12 @@ The architecture contract is defined in [001-clean-feature-module-architecture.m
 
 Each slice must generate, compile, and behaviorally verify a usable project before the next slice begins.
 
+## Feature Completion Gate
+
+Every feature slice must name its user-visible capability and observable acceptance behaviors before implementation. A feature is complete only after its real adapters and routes are composed and all applicable checks pass: repository-wide verification, fresh PostgreSQL and MySQL generated fixtures, migration/reset/seed replay for persistence changes, composed HTTP authorization/tenant/cookie behavior, worker or scheduler behavior, frontend contract/type/unit/build checks, and a live browser flow for user-facing full-stack behavior.
+
+Feature graph changes must extend the canonical acceptance scenarios and pairwise-coverage proof. Verify each feature in an independent valid configuration where possible and in one configuration with its required dependencies or the complete pack. Dependency resolution alone is not runtime evidence. Record the commands, configurations, outcomes, failures, and remaining gaps in the implementation ledger.
+
 ## Generated Documentation and Commands
 
 Generate a root README, folder/architecture guide, feature-authoring guide, auth/RBAC guide, jobs/cron guide, testing guide, `.env.example`, Air configuration, Docker Compose, sqlc, Goose, hey-api, and CI configuration.

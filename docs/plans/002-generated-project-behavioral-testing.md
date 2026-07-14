@@ -14,6 +14,14 @@ Prove generated projects work as applications, not only that templates render. T
 - Architecture tests reject dependency violations and incomplete route/permission declarations.
 - Contract tests export OpenAPI, regenerate hey-api, typecheck it, and reject stale generated output.
 
+## Feature Slice Completion Gate
+
+Before implementing a slice, state the user-visible capability and its success plus deny/error behaviors. Add a public-seam test first, then implement the smallest domain/application, adapter, transport, composition, and frontend changes needed for that behavior.
+
+Do not mark the slice complete until every applicable layer is verified: root generator checks; fresh generated PostgreSQL and MySQL backend tests; migrations up, rollback/reset, remigration, and idempotent seed replay; composed HTTP behavior with real repositories; worker/scheduler behavior; regenerated frontend contracts with typecheck, unit tests, and build; and a live browser flow for user-facing full-stack behavior. Record tested configurations and residual gaps in the progress ledger.
+
+For configuration changes, add or update canonical acceptance scenarios and the pairwise proof. Exercise the feature in an independent valid configuration when one exists, then with its dependencies or the complete feature pack. A successful template render or compile is necessary but never sufficient evidence.
+
 ## Acceptance Harness
 
 For each declared scenario:

@@ -47,8 +47,9 @@ type Permission struct {
 }
 
 type Repository interface {
-	Create(context.Context, Organization, Membership) error
+	Create(context.Context, Organization, Membership, Role, Permission) error
 	FindMembership(context.Context, ID, platformauth.UserID) (Membership, error)
+	DefaultOrganization(context.Context, platformauth.UserID) (Organization, error)
 	Permissions(context.Context, ID, platformauth.UserID) ([]authorization.Permission, error)
 	AssignRole(context.Context, ID, platformauth.UserID, RoleID) error
 }

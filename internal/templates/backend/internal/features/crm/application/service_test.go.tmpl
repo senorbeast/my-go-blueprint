@@ -1,0 +1,215 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	organizationauthorization "{{.Module}}/backend/internal/features/organizations/adapters/authorization"
+	organization "{{.Module}}/backend/internal/features/organizations/domain"
+	"{{.Module}}/backend/internal/features/crm/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type crmRepository struct { query domain.ListQuery; listed bool; company domain.Company; contact domain.Contact; pipeline domain.Pipeline; stage domain.Stage; deal domain.Deal; activity domain.Activity; created bool; companyUpdated bool; contactCreated bool; pipelineCreated bool; stageCreated bool; dealCreated bool; activityCreated bool }
+func (r *crmRepository) CreateCompany(_ context.Context, company domain.Company) error { r.company = company; r.created = true; return nil }
+func (r *crmRepository) UpdateCompany(_ context.Context, company domain.Company) error { r.company = company; r.companyUpdated = true; return nil }
+func (r *crmRepository) CreateContact(_ context.Context, contact domain.Contact) error { r.contact = contact; r.contactCreated = true; return nil }
+func (r *crmRepository) CreatePipeline(_ context.Context, pipeline domain.Pipeline) error { r.pipeline = pipeline; r.pipelineCreated = true; return nil }
+func (r *crmRepository) CreateStage(_ context.Context, stage domain.Stage) error { r.stage = stage; r.stageCreated = true; return nil }
+func (r *crmRepository) CreateDeal(_ context.Context, deal domain.Deal) error { r.deal = deal; r.dealCreated = true; return nil }
+func (r *crmRepository) CreateActivity(_ context.Context, activity domain.Activity) error { r.activity = activity; r.activityCreated = true; return nil }
+func (r *crmRepository) FindCompany(_ context.Context, organizationID domain.OrganizationID, companyID domain.ID) (domain.Company, error) { if r.company.ID == companyID && r.company.OrganizationID == organizationID { return r.company, nil }; return domain.Company{}, domain.ErrNotFound }
+func (*crmRepository) FindContact(context.Context, domain.OrganizationID, domain.ID) (domain.Contact, error) { return domain.Contact{}, nil }
+func (r *crmRepository) FindPipeline(_ context.Context, organizationID domain.OrganizationID, pipelineID domain.ID) (domain.Pipeline, error) { if r.pipeline.ID == pipelineID && r.pipeline.OrganizationID == organizationID { return r.pipeline, nil }; return domain.Pipeline{}, errors.New("pipeline not found") }
+func (r *crmRepository) FindStage(_ context.Context, organizationID domain.OrganizationID, stageID domain.ID) (domain.Stage, error) { if r.stage.ID == stageID && r.stage.OrganizationID == organizationID { return r.stage, nil }; return domain.Stage{}, errors.New("stage not found") }
+func (r *crmRepository) FindDeal(_ context.Context, organizationID domain.OrganizationID, dealID domain.ID) (domain.Deal, error) { if r.deal.ID == dealID && r.deal.OrganizationID == organizationID { return r.deal, nil }; return domain.Deal{}, errors.New("deal not found") }
+func (*crmRepository) FindActivity(context.Context, domain.OrganizationID, domain.ID) (domain.Activity, error) { return domain.Activity{}, nil }
+func (r *crmRepository) ListCompanies(_ context.Context, query domain.ListQuery) (pagination.Page[domain.Company], error) { r.query = query; r.listed = true; return pagination.Page[domain.Company]{}, nil }
+func (*crmRepository) ListContacts(context.Context, domain.ListQuery) (pagination.Page[domain.Contact], error) { return pagination.Page[domain.Contact]{}, nil }
+func (*crmRepository) ListPipelines(context.Context, domain.ListQuery) (pagination.Page[domain.Pipeline], error) { return pagination.Page[domain.Pipeline]{}, nil }
+func (*crmRepository) ListStages(context.Context, domain.ListQuery) (pagination.Page[domain.Stage], error) { return pagination.Page[domain.Stage]{}, nil }
+func (*crmRepository) ListDeals(context.Context, domain.ListQuery) (pagination.Page[domain.Deal], error) { return pagination.Page[domain.Deal]{}, nil }
+func (*crmRepository) ListActivities(context.Context, domain.ListQuery) (pagination.Page[domain.Activity], error) { return pagination.Page[domain.Activity]{}, nil }
+
+type crmPermissions struct { permissions []authorization.Permission }
+func (*crmPermissions) Create(context.Context, organization.Organization, organization.Membership, organization.Role, organization.Permission) error { return nil }
+func (*crmPermissions) FindMembership(context.Context, organization.ID, auth.UserID) (organization.Membership, error) { return organization.Membership{}, nil }
+func (*crmPermissions) DefaultOrganization(context.Context, auth.UserID) (organization.Organization, error) { return organization.Organization{}, nil }
+func (r *crmPermissions) Permissions(context.Context, organization.ID, auth.UserID) ([]authorization.Permission, error) { return r.permissions, nil }
+func (*crmPermissions) AssignRole(context.Context, organization.ID, auth.UserID, organization.RoleID) error { return nil }
+
+func TestCRMListAuthorizesTenantAndPermission(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	repo := &crmRepository{}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	if _, err := service.List(ctx, principal, "tenant-a", domain.Companies, pagination.Request{Limit: 20}); err != nil { t.Fatalf("owner list = %v", err) }
+	if !repo.listed || repo.query.OrganizationID != "tenant-a" { t.Fatalf("owner query = %+v, listed=%v", repo.query, repo.listed) }
+
+	_, err := service.List(ctx, principal, "tenant-b", domain.Companies, pagination.Request{Limit: 20})
+	var applicationError *platformerrors.Error
+	if !errors.As(err, &applicationError) || applicationError.Kind != platformerrors.Forbidden { t.Fatalf("cross-tenant error = %v", err) }
+
+	denied := New(&crmRepository{}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	_, err = denied.List(ctx, principal, "tenant-a", domain.Companies, pagination.Request{Limit: 20})
+	if !errors.As(err, &applicationError) || applicationError.Kind != platformerrors.Forbidden { t.Fatalf("unprivileged member error = %v", err) }
+}
+
+func TestFindCompanyAuthorizesTenantAndReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	companyID := domain.ID("00000000-0000-0000-0000-000000000051")
+	company := domain.Company{ID: companyID, OrganizationID: "tenant-a", Name: "Acme"}
+	service := New(&crmRepository{company: company}, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+
+	got, err := service.FindCompany(ctx, principal, "tenant-a", string(companyID))
+	if err != nil || got != company { t.Fatalf("owner find = %+v, %v", got, err) }
+	if _, err = service.FindCompany(ctx, principal, "tenant-b", string(companyID)); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(&crmRepository{company: company}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.FindCompany(ctx, principal, "tenant-a", string(companyID)); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	_, err = service.FindCompany(ctx, principal, "tenant-a", "00000000-0000-0000-0000-000000000099")
+	var applicationError *platformerrors.Error
+	if !errors.As(err, &applicationError) || applicationError.Kind != platformerrors.NotFound { t.Fatalf("unknown company error = %v", err) }
+}
+
+func TestUpdateCompanyAuthorizesTenantAndValidatesInput(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	companyID := domain.ID("00000000-0000-0000-0000-000000000051")
+	repo := &crmRepository{company: domain.Company{ID: companyID, OrganizationID: "tenant-a", Name: "Acme"}}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+
+	company, err := service.UpdateCompany(ctx, principal, "tenant-a", string(companyID), UpdateCompany{Name: "  Acme Renamed  "})
+	if err != nil { t.Fatalf("update company = %v", err) }
+	if !repo.companyUpdated || repo.company != company || company.Name != "Acme Renamed" { t.Fatalf("updated company = %+v, stored = %+v", company, repo.company) }
+	if _, err = service.UpdateCompany(ctx, principal, "tenant-b", string(companyID), UpdateCompany{Name: "Acme"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(&crmRepository{company: repo.company}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.UpdateCompany(ctx, principal, "tenant-a", string(companyID), UpdateCompany{Name: "Acme"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.UpdateCompany(ctx, principal, "tenant-a", string(companyID), UpdateCompany{Name: " "}); err == nil { t.Fatal("blank company name accepted") }
+	_, err = service.UpdateCompany(ctx, principal, "tenant-a", "00000000-0000-0000-0000-000000000099", UpdateCompany{Name: "Acme"})
+	var applicationError *platformerrors.Error
+	if !errors.As(err, &applicationError) || applicationError.Kind != platformerrors.NotFound { t.Fatalf("unknown company error = %v", err) }
+}
+
+type crmIDs struct{}
+func (crmIDs) New() string { return "00000000-0000-0000-0000-000000000050" }
+type crmClock struct{}
+func (crmClock) Now() time.Time { return time.Date(2026, time.July, 14, 0, 0, 0, 0, time.UTC) }
+
+func TestCreateCompanyAuthorizesTenantAndPermission(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	repo := &crmRepository{}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	company, err := service.CreateCompany(ctx, principal, "tenant-a", CreateCompany{Name: "  Acme  "})
+	if err != nil { t.Fatalf("create company = %v", err) }
+	if !repo.created || repo.company != company { t.Fatalf("created company = %+v, stored = %+v", company, repo.company) }
+	if company.ID != "00000000-0000-0000-0000-000000000050" || company.OrganizationID != "tenant-a" || company.Name != "Acme" { t.Fatalf("company = %+v", company) }
+
+	if _, err = service.CreateCompany(ctx, principal, "tenant-b", CreateCompany{Name: "Acme"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(&crmRepository{}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.CreateCompany(ctx, principal, "tenant-a", CreateCompany{Name: "Acme"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.CreateCompany(ctx, principal, "tenant-a", CreateCompany{Name: " "}); err == nil { t.Fatal("blank company name accepted") }
+}
+
+func TestCreateContactAuthorizesTenantAndValidatesInput(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	repo := &crmRepository{}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	contact, err := service.CreateContact(ctx, principal, "tenant-a", CreateContact{Name: "  Ada Lovelace  ", Email: "ada@example.test"})
+	if err != nil { t.Fatalf("create contact = %v", err) }
+	if !repo.contactCreated || repo.contact != contact { t.Fatalf("created contact = %+v, stored = %+v", contact, repo.contact) }
+	if contact.ID != "00000000-0000-0000-0000-000000000050" || contact.OrganizationID != "tenant-a" || contact.Name != "Ada Lovelace" || contact.Email != "ada@example.test" { t.Fatalf("contact = %+v", contact) }
+
+	if _, err = service.CreateContact(ctx, principal, "tenant-b", CreateContact{Name: "Ada"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(&crmRepository{}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.CreateContact(ctx, principal, "tenant-a", CreateContact{Name: "Ada"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.CreateContact(ctx, principal, "tenant-a", CreateContact{Name: " ", Email: "ada@example.test"}); err == nil { t.Fatal("blank contact name accepted") }
+}
+
+func TestCreatePipelineAuthorizesTenantAndValidatesInput(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	repo := &crmRepository{}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	pipeline, err := service.CreatePipeline(ctx, principal, "tenant-a", CreatePipeline{Name: "  Sales  "})
+	if err != nil { t.Fatalf("create pipeline = %v", err) }
+	if !repo.pipelineCreated || repo.pipeline != pipeline { t.Fatalf("created pipeline = %+v, stored = %+v", pipeline, repo.pipeline) }
+	if pipeline.ID != "00000000-0000-0000-0000-000000000050" || pipeline.OrganizationID != "tenant-a" || pipeline.Name != "Sales" { t.Fatalf("pipeline = %+v", pipeline) }
+
+	if _, err = service.CreatePipeline(ctx, principal, "tenant-b", CreatePipeline{Name: "Sales"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(&crmRepository{}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.CreatePipeline(ctx, principal, "tenant-a", CreatePipeline{Name: "Sales"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.CreatePipeline(ctx, principal, "tenant-a", CreatePipeline{Name: " "}); err == nil { t.Fatal("blank pipeline name accepted") }
+}
+
+func TestCreateStageAuthorizesTenantPipelineAndValidatesInput(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	pipelineID := domain.ID("00000000-0000-0000-0000-000000000051")
+	repo := &crmRepository{pipeline: domain.Pipeline{ID: pipelineID, OrganizationID: "tenant-a"}}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	stage, err := service.CreateStage(ctx, principal, "tenant-a", CreateStage{PipelineID: string(pipelineID), Name: "  Qualified  ", Position: 1})
+	if err != nil { t.Fatalf("create stage = %v", err) }
+	if !repo.stageCreated || repo.stage != stage { t.Fatalf("created stage = %+v, stored = %+v", stage, repo.stage) }
+	if stage.ID != "00000000-0000-0000-0000-000000000050" || stage.OrganizationID != "tenant-a" || stage.PipelineID != pipelineID || stage.Name != "Qualified" || stage.Position != 1 { t.Fatalf("stage = %+v", stage) }
+
+	if _, err = service.CreateStage(ctx, principal, "tenant-b", CreateStage{PipelineID: string(pipelineID), Name: "Qualified", Position: 1}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(&crmRepository{pipeline: repo.pipeline}, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.CreateStage(ctx, principal, "tenant-a", CreateStage{PipelineID: string(pipelineID), Name: "Qualified", Position: 1}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.CreateStage(ctx, principal, "tenant-a", CreateStage{PipelineID: string(pipelineID), Name: " ", Position: 1}); err == nil { t.Fatal("blank stage name accepted") }
+	if _, err = service.CreateStage(ctx, principal, "tenant-a", CreateStage{PipelineID: string(pipelineID), Name: "Qualified", Position: -1}); err == nil { t.Fatal("negative stage position accepted") }
+	if _, err = service.CreateStage(ctx, principal, "tenant-a", CreateStage{PipelineID: "other-pipeline", Name: "Qualified", Position: 1}); err == nil { t.Fatal("unknown pipeline accepted") }
+}
+
+func TestCreateDealAuthorizesTenantReferencesAndValidatesInput(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	companyID := domain.ID("00000000-0000-0000-0000-000000000051")
+	pipelineID := domain.ID("00000000-0000-0000-0000-000000000052")
+	stageID := domain.ID("00000000-0000-0000-0000-000000000053")
+	repo := &crmRepository{company: domain.Company{ID: companyID, OrganizationID: "tenant-a"}, pipeline: domain.Pipeline{ID: pipelineID, OrganizationID: "tenant-a"}, stage: domain.Stage{ID: stageID, OrganizationID: "tenant-a", PipelineID: pipelineID}}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	deal, err := service.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: string(stageID), Name: "  Enterprise  ", ValueCents: 9000})
+	if err != nil { t.Fatalf("create deal = %v", err) }
+	if !repo.dealCreated || repo.deal != deal { t.Fatalf("created deal = %+v, stored = %+v", deal, repo.deal) }
+	if deal.OrganizationID != "tenant-a" || deal.CompanyID != companyID || deal.PipelineID != pipelineID || deal.StageID != stageID || deal.Name != "Enterprise" || deal.ValueCents != 9000 { t.Fatalf("deal = %+v", deal) }
+
+	if _, err = service.CreateDeal(ctx, principal, "tenant-b", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: string(stageID), Name: "Enterprise"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(repo, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: string(stageID), Name: "Enterprise"}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: string(stageID), Name: " ", ValueCents: 1}); err == nil { t.Fatal("blank deal name accepted") }
+	if _, err = service.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: string(stageID), Name: "Enterprise", ValueCents: -1}); err == nil { t.Fatal("negative deal value accepted") }
+	if _, err = service.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: "other-company", PipelineID: string(pipelineID), StageID: string(stageID), Name: "Enterprise"}); err == nil { t.Fatal("unknown company accepted") }
+	if _, err = service.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: "other-stage", Name: "Enterprise"}); err == nil { t.Fatal("unknown stage accepted") }
+	wrongPipeline := *repo
+	wrongPipeline.stage.PipelineID = "other-pipeline"
+	wrongService := New(&wrongPipeline, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	if _, err = wrongService.CreateDeal(ctx, principal, "tenant-a", CreateDeal{CompanyID: string(companyID), PipelineID: string(pipelineID), StageID: string(stageID), Name: "Enterprise"}); err == nil { t.Fatal("mismatched pipeline/stage accepted") }
+}
+
+func TestCreateActivityAuthorizesTenantDealAndValidatesInput(t *testing.T) {
+	ctx := context.Background()
+	principal := auth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	dealID := domain.ID("00000000-0000-0000-0000-000000000054")
+	repo := &crmRepository{deal: domain.Deal{ID: dealID, OrganizationID: "tenant-a"}}
+	service := New(repo, organizationauthorization.New(&crmPermissions{permissions: []authorization.Permission{"platform.admin"}}), crmIDs{}, crmClock{})
+	occurredAt := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
+	activity, err := service.CreateActivity(ctx, principal, "tenant-a", CreateActivity{DealID: string(dealID), Kind: "  call  ", Note: "  Follow up  ", OccurredAt: occurredAt})
+	if err != nil { t.Fatalf("create activity = %v", err) }
+	if !repo.activityCreated || repo.activity != activity { t.Fatalf("created activity = %+v, stored = %+v", activity, repo.activity) }
+	if activity.OrganizationID != "tenant-a" || activity.DealID != dealID || activity.Kind != "call" || activity.Note != "Follow up" || !activity.OccurredAt.Equal(occurredAt) { t.Fatalf("activity = %+v", activity) }
+
+	if _, err = service.CreateActivity(ctx, principal, "tenant-b", CreateActivity{DealID: string(dealID), Kind: "call", OccurredAt: occurredAt}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("cross-tenant error = %v", err) }
+	denied := New(repo, organizationauthorization.New(&crmPermissions{}), crmIDs{}, crmClock{})
+	if _, err = denied.CreateActivity(ctx, principal, "tenant-a", CreateActivity{DealID: string(dealID), Kind: "call", OccurredAt: occurredAt}); !errors.As(err, new(*platformerrors.Error)) { t.Fatalf("unprivileged member error = %v", err) }
+	if _, err = service.CreateActivity(ctx, principal, "tenant-a", CreateActivity{DealID: "foreign-deal", Kind: "call", OccurredAt: occurredAt}); err == nil { t.Fatal("foreign deal accepted") }
+	if _, err = service.CreateActivity(ctx, principal, "tenant-a", CreateActivity{DealID: string(dealID), Kind: " ", OccurredAt: occurredAt}); err == nil { t.Fatal("blank activity kind accepted") }
+	if _, err = service.CreateActivity(ctx, principal, "tenant-a", CreateActivity{DealID: string(dealID), Kind: "call"}); err == nil { t.Fatal("zero activity time accepted") }
+}

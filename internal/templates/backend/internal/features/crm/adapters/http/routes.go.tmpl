@@ -2,22 +2,54 @@ package http
 
 import (
 	"context"
+	"time"
 	"github.com/danielgtaylor/huma/v2"
 	"{{.Module}}/backend/internal/features/crm/application"
 	"{{.Module}}/backend/internal/features/crm/domain"
 	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 	"{{.Module}}/backend/internal/platform/pagination"
 )
 
 type Routes struct { service *application.Service }
 func New(service *application.Service) Routes { return Routes{service: service} }
-func (Routes) Descriptor() httpplatform.Descriptor { return httpplatform.Descriptor{Prefix: "/api/v1/organizations/{organizationID}/crm", Tags: []string{"CRM"}, Authentication: httpplatform.Required} }
-type listInput struct { Limit uint16 `query:"limit" minimum:"1" maximum:"100" default:"20"`; Cursor string `query:"cursor"` }
+func (Routes) Descriptor() httpplatform.Descriptor { permission := authorization.Permission("crm.companies.view"); return httpplatform.Descriptor{Prefix: "/api/v1/organizations/{organizationID}/crm", Tags: []string{"CRM"}, Authentication: httpplatform.Required, Permission: &permission} }
+type createCompanyInput struct { OrganizationID string `path:"organizationID"`; Body struct { Name string `json:"name" minLength:"1" maxLength:"200"` } }
+type companyOutput struct { Body domain.Company }
+type findCompanyInput struct { OrganizationID string `path:"organizationID"`; CompanyID string `path:"companyID"` }
+type updateCompanyInput struct { OrganizationID string `path:"organizationID"`; CompanyID string `path:"companyID"`; Body struct { Name string `json:"name" minLength:"1" maxLength:"200"` } }
+type createContactInput struct { OrganizationID string `path:"organizationID"`; Body struct { Name string `json:"name" minLength:"1" maxLength:"200"`; Email string `json:"email" maxLength:"320"` } }
+type contactOutput struct { Body domain.Contact }
+type createPipelineInput struct { OrganizationID string `path:"organizationID"`; Body struct { Name string `json:"name" minLength:"1" maxLength:"200"` } }
+type pipelineOutput struct { Body domain.Pipeline }
+type createStageInput struct { OrganizationID string `path:"organizationID"`; PipelineID string `path:"pipelineID"`; Body struct { Name string `json:"name" minLength:"1" maxLength:"200"`; Position int `json:"position" minimum:"0"` } }
+type stageOutput struct { Body domain.Stage }
+type createDealInput struct { OrganizationID string `path:"organizationID"`; Body struct { CompanyID string `json:"companyID" minLength:"1"`; PipelineID string `json:"pipelineID" minLength:"1"`; StageID string `json:"stageID" minLength:"1"`; Name string `json:"name" minLength:"1" maxLength:"200"`; ValueCents int64 `json:"valueCents" minimum:"0"` } }
+type dealOutput struct { Body domain.Deal }
+type createActivityInput struct { OrganizationID string `path:"organizationID"`; Body struct { DealID string `json:"dealID" minLength:"1"`; Kind string `json:"kind" minLength:"1" maxLength:"200"`; Note string `json:"note"`; OccurredAt time.Time `json:"occurredAt"` } }
+type activityOutput struct { Body domain.Activity }
+type listInput struct { OrganizationID string `path:"organizationID"`; Limit uint16 `query:"limit" minimum:"1" maximum:"100" default:"20"`; Cursor string `query:"cursor"` }
 type listOutput struct { Body any }
-func (r Routes) list(kind domain.EntityKind) func(context.Context, *listInput) (*listOutput, error) { return func(ctx context.Context, input *listInput) (*listOutput, error) { principal, _ := auth.PrincipalFrom(ctx); limit, err := pagination.NewLimit(input.Limit); if err != nil { return nil, err }; page, err := r.service.List(ctx, principal, kind, pagination.Request{Cursor: input.Cursor, Limit: limit}); if err != nil { return nil, err }; return &listOutput{Body: page}, nil } }
+func (r Routes) createCompany(ctx context.Context, input *createCompanyInput) (*companyOutput, error) { principal, _ := auth.PrincipalFrom(ctx); company, err := r.service.CreateCompany(ctx, principal, input.OrganizationID, application.CreateCompany{Name: input.Body.Name}); if err != nil { return nil, err }; return &companyOutput{Body: company}, nil }
+func (r Routes) findCompany(ctx context.Context, input *findCompanyInput) (*companyOutput, error) { principal, _ := auth.PrincipalFrom(ctx); company, err := r.service.FindCompany(ctx, principal, input.OrganizationID, input.CompanyID); if err != nil { return nil, err }; return &companyOutput{Body: company}, nil }
+func (r Routes) updateCompany(ctx context.Context, input *updateCompanyInput) (*companyOutput, error) { principal, _ := auth.PrincipalFrom(ctx); company, err := r.service.UpdateCompany(ctx, principal, input.OrganizationID, input.CompanyID, application.UpdateCompany{Name: input.Body.Name}); if err != nil { return nil, err }; return &companyOutput{Body: company}, nil }
+func (r Routes) createContact(ctx context.Context, input *createContactInput) (*contactOutput, error) { principal, _ := auth.PrincipalFrom(ctx); contact, err := r.service.CreateContact(ctx, principal, input.OrganizationID, application.CreateContact{Name: input.Body.Name, Email: input.Body.Email}); if err != nil { return nil, err }; return &contactOutput{Body: contact}, nil }
+func (r Routes) createPipeline(ctx context.Context, input *createPipelineInput) (*pipelineOutput, error) { principal, _ := auth.PrincipalFrom(ctx); pipeline, err := r.service.CreatePipeline(ctx, principal, input.OrganizationID, application.CreatePipeline{Name: input.Body.Name}); if err != nil { return nil, err }; return &pipelineOutput{Body: pipeline}, nil }
+func (r Routes) createStage(ctx context.Context, input *createStageInput) (*stageOutput, error) { principal, _ := auth.PrincipalFrom(ctx); stage, err := r.service.CreateStage(ctx, principal, input.OrganizationID, application.CreateStage{PipelineID: input.PipelineID, Name: input.Body.Name, Position: input.Body.Position}); if err != nil { return nil, err }; return &stageOutput{Body: stage}, nil }
+func (r Routes) createDeal(ctx context.Context, input *createDealInput) (*dealOutput, error) { principal, _ := auth.PrincipalFrom(ctx); deal, err := r.service.CreateDeal(ctx, principal, input.OrganizationID, application.CreateDeal{CompanyID: input.Body.CompanyID, PipelineID: input.Body.PipelineID, StageID: input.Body.StageID, Name: input.Body.Name, ValueCents: input.Body.ValueCents}); if err != nil { return nil, err }; return &dealOutput{Body: deal}, nil }
+func (r Routes) createActivity(ctx context.Context, input *createActivityInput) (*activityOutput, error) { principal, _ := auth.PrincipalFrom(ctx); activity, err := r.service.CreateActivity(ctx, principal, input.OrganizationID, application.CreateActivity{DealID: input.Body.DealID, Kind: input.Body.Kind, Note: input.Body.Note, OccurredAt: input.Body.OccurredAt}); if err != nil { return nil, err }; return &activityOutput{Body: activity}, nil }
+func (r Routes) list(kind domain.EntityKind) func(context.Context, *listInput) (*listOutput, error) { return func(ctx context.Context, input *listInput) (*listOutput, error) { principal, _ := auth.PrincipalFrom(ctx); limit, err := pagination.NewLimit(input.Limit); if err != nil { return nil, err }; page, err := r.service.List(ctx, principal, input.OrganizationID, kind, pagination.Request{Cursor: input.Cursor, Limit: limit}); if err != nil { return nil, err }; return &listOutput{Body: page}, nil } }
 func (r Routes) Register(reg httpplatform.Registrar) error {
 	base := "/api/v1/organizations/{organizationID}/crm/"
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-crm-company", Method: "POST", Path: base+"companies", Tags: []string{"CRM"}}, r.createCompany)
+	httpplatform.Register(reg, huma.Operation{OperationID: "find-crm-company", Method: "GET", Path: base+"companies/{companyID}", Tags: []string{"CRM"}}, r.findCompany)
+	httpplatform.Register(reg, huma.Operation{OperationID: "update-crm-company", Method: "PATCH", Path: base+"companies/{companyID}", Tags: []string{"CRM"}}, r.updateCompany)
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-crm-contact", Method: "POST", Path: base+"contacts", Tags: []string{"CRM"}}, r.createContact)
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-crm-pipeline", Method: "POST", Path: base+"pipelines", Tags: []string{"CRM"}}, r.createPipeline)
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-crm-stage", Method: "POST", Path: base+"pipelines/{pipelineID}/stages", Tags: []string{"CRM"}}, r.createStage)
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-crm-deal", Method: "POST", Path: base+"deals", Tags: []string{"CRM"}}, r.createDeal)
+	httpplatform.Register(reg, huma.Operation{OperationID: "create-crm-activity", Method: "POST", Path: base+"activities", Tags: []string{"CRM"}}, r.createActivity)
 	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-companies", Method: "GET", Path: base+"companies", Tags: []string{"CRM"}}, r.list(domain.Companies))
 	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-contacts", Method: "GET", Path: base+"contacts", Tags: []string{"CRM"}}, r.list(domain.Contacts))
 	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-pipelines", Method: "GET", Path: base+"pipelines", Tags: []string{"CRM"}}, r.list(domain.Pipelines))
@@ -26,4 +58,3 @@ func (r Routes) Register(reg httpplatform.Registrar) error {
 	httpplatform.Register(reg, huma.Operation{OperationID: "list-crm-activities", Method: "GET", Path: base+"activities", Tags: []string{"CRM"}}, r.list(domain.Activities))
 	return nil
 }
-

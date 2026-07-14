@@ -9,10 +9,34 @@ import (
 	"go.uber.org/zap"
 	"{{.Module}}/backend/internal/platform/config"
 	"{{.Module}}/backend/internal/platform/database"
+	"{{.Module}}/backend/internal/platform/ratelimit"
+	{{if .Auth}}
+	authrepository "{{.Module}}/backend/internal/features/auth/adapters/repository"
+	authapplication "{{.Module}}/backend/internal/features/auth/application"
+	authhttp "{{.Module}}/backend/internal/features/auth/adapters/http"
+	organizationrepository "{{.Module}}/backend/internal/features/organizations/adapters/repository"
+	organizationauthorization "{{.Module}}/backend/internal/features/organizations/adapters/authorization"
+	organizationapplication "{{.Module}}/backend/internal/features/organizations/application"
+	organizationhttp "{{.Module}}/backend/internal/features/organizations/adapters/http"
+	userpassword "{{.Module}}/backend/internal/features/users/adapters/password"
+	userrepository "{{.Module}}/backend/internal/features/users/adapters/repository"
+	userapplication "{{.Module}}/backend/internal/features/users/application"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	{{end}}
+	{{if .CMS}}
+	cmsrepository "{{.Module}}/backend/internal/features/cms/adapters/repository"
+	cmsapplication "{{.Module}}/backend/internal/features/cms/application"
+	cmshttp "{{.Module}}/backend/internal/features/cms/adapters/http"
+	{{end}}
+	{{if .CRM}}
+	crmrepository "{{.Module}}/backend/internal/features/crm/adapters/repository"
+	crmapplication "{{.Module}}/backend/internal/features/crm/application"
+	crmhttp "{{.Module}}/backend/internal/features/crm/adapters/http"
+	{{end}}
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 )
 
-type Application struct { config config.Config; logger *zap.Logger; database *database.DB; server *echo.Echo }
+type Application struct { config config.Config; logger *zap.Logger; database *database.DB; limiter ratelimit.Limiter; server *echo.Echo }
 
 func New(_ context.Context) (*Application, error) {
 	cfg, err := config.Load()
@@ -21,11 +45,41 @@ func New(_ context.Context) (*Application, error) {
 	if err != nil { return nil, err }
 	db, err := database.Open(context.Background(), cfg.DatabaseURL)
 	if err != nil { _ = logger.Sync(); return nil, err }
+	limiter := ratelimit.NewSQLRollingWindow(db.SQL(), time.Now)
 	e := echo.New()
 	httpplatform.InstallMiddleware(e, logger, cfg)
-	httpplatform.NewRegistrar(e).PlatformRoutes(db.Ping)
+	registrar := httpplatform.NewRegistrar(e)
+	registrar.PlatformRoutes(db.Ping)
+	{{if .Auth}}
+	jwt, err := platformauth.NewJWT(cfg.JWTSecret)
+	if err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	e.Use(httpplatform.PrincipalMiddleware(jwt))
+	e.Use(httpplatform.CSRFMiddleware())
+	authStore := authrepository.NewSQLStore(db.SQL())
+	authRepository := authrepository.New(authStore)
+	authService := authapplication.New(authRepository, platformauth.Clock{}, platformauth.Secrets{}, platformauth.IDs{}, jwt, 15*time.Minute, 30*24*time.Hour)
+	userStore := userrepository.NewSQLStore(db.SQL())
+	userService := userapplication.New(userrepository.New(userStore), nil, platformauth.IDs{}, platformauth.Clock{})
+	organizationStore := organizationrepository.NewSQLStore(db.SQL())
+	organizationRepository := organizationrepository.New(organizationStore)
+	authorizer := organizationauthorization.New(organizationRepository)
+	organizationService := organizationapplication.New(organizationRepository, authorizer, platformauth.Clock{}, platformauth.IDs{})
+	credentials := authapplication.NewCredentials(userService, organizationService, authService, userpassword.NewBcrypt(0))
+	if err := registrar.RegisterModule(authhttp.New(authService, credentials, authhttp.NewCookies(cfg.CookieSecure))); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	if err := registrar.RegisterModule(organizationhttp.New(organizationService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	{{if .CMS}}
+	cmsStore := cmsrepository.NewSQLStore(db.SQL())
+	cmsService := cmsapplication.New(cmsrepository.New(cmsStore), authorizer, platformauth.IDs{}, platformauth.Clock{})
+	if err := registrar.RegisterModule(cmshttp.New(cmsService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	{{end}}
+	{{if .CRM}}
+	crmStore := crmrepository.NewSQLStore(db.SQL())
+	crmService := crmapplication.New(crmrepository.New(crmStore), authorizer, platformauth.IDs{}, platformauth.Clock{})
+	if err := registrar.RegisterModule(crmhttp.New(crmService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	{{end}}
+	{{end}}
 	// Construct repositories, services, and feature route adapters here.
-	return &Application{cfg, logger, db, e}, nil
+	return &Application{config: cfg, logger: logger, database: db, limiter: limiter, server: e}, nil
 }
 
 func (a *Application) Run(ctx context.Context) error {

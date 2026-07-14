@@ -1,0 +1,33 @@
+package auth
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"time"
+)
+
+// Clock, IDs, and Secrets are the production implementations of the auth
+// application seams. Bootstrap can inject them without exposing infrastructure
+// concerns to the application package.
+type Clock struct{}
+
+func (Clock) Now() time.Time { return time.Now().UTC() }
+
+type IDs struct{}
+
+func (IDs) New() string {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil { panic("generate UUID: " + err.Error()) }
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16])
+}
+
+type Secrets struct{}
+
+func (Secrets) NewSecret() (string, error) {
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil { return "", fmt.Errorf("generate secret: %w", err) }
+	return base64.RawURLEncoding.EncodeToString(value), nil
+}

@@ -9,31 +9,47 @@ import (
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 )
 
-type CookiePolicy interface {
+type SessionCookiePolicy interface {
 	SessionCookies(application.Tokens) []string
 	ClearSessionCookies() []string
 }
+type SessionService interface {
+	Rotate(context.Context, string) (application.Tokens, error)
+	Logout(context.Context, platformauth.Principal) error
+}
+type CredentialService interface {
+	Signup(context.Context, application.Signup) (application.Tokens, error)
+	Login(context.Context, application.Login) (application.Tokens, error)
+}
 type Routes struct {
-	service *application.Service
-	cookies CookiePolicy
+	service SessionService
+	credentials CredentialService
+	cookies SessionCookiePolicy
 }
 
-func New(service *application.Service, cookies CookiePolicy) Routes {
-	return Routes{service: service, cookies: cookies}
+func New(service SessionService, credentials CredentialService, cookies SessionCookiePolicy) Routes {
+	return Routes{service: service, credentials: credentials, cookies: cookies}
 }
 func (Routes) Descriptor() httpplatform.Descriptor {
 	return httpplatform.Descriptor{Prefix: "/api/v1/auth", Tags: []string{"Authentication"}, Authentication: httpplatform.Optional}
 }
 func (r Routes) Register(reg httpplatform.Registrar) error {
+	httpplatform.Register(reg, huma.Operation{OperationID: "signup", Method: "POST", Path: "/api/v1/auth/signup", Tags: []string{"Authentication"}}, func(ctx context.Context, in *SignupInput) (*SessionOutput, error) {
+		tokens, err := r.credentials.Signup(ctx, application.Signup{Email: in.Body.Email, DisplayName: in.Body.DisplayName, Password: in.Body.Password, OrganizationName: in.Body.OrganizationName})
+		if err != nil { return nil, err }
+		return r.sessionOutput(tokens), nil
+	})
+	httpplatform.Register(reg, huma.Operation{OperationID: "login", Method: "POST", Path: "/api/v1/auth/login", Tags: []string{"Authentication"}}, func(ctx context.Context, in *LoginInput) (*SessionOutput, error) {
+		tokens, err := r.credentials.Login(ctx, application.Login{Email: in.Body.Email, Password: in.Body.Password})
+		if err != nil { return nil, err }
+		return r.sessionOutput(tokens), nil
+	})
 	httpplatform.Register(reg, huma.Operation{OperationID: "refresh-session", Method: "POST", Path: "/api/v1/auth/refresh", Tags: []string{"Authentication"}}, func(ctx context.Context, in *RefreshInput) (*RefreshOutput, error) {
 		tokens, err := r.service.Rotate(ctx, in.RefreshToken)
 		if err != nil {
 			return nil, err
 		}
-		out := &RefreshOutput{SetCookie: r.cookies.SessionCookies(tokens)}
-		out.Body.AccessExpiresAt = tokens.AccessExpiry
-		out.Body.RefreshExpiresAt = tokens.RefreshExpiry
-		return out, nil
+		return r.sessionOutput(tokens), nil
 	})
 	httpplatform.Register(reg, huma.Operation{OperationID: "logout-session", Method: "POST", Path: "/api/v1/auth/logout", Tags: []string{"Authentication"}}, func(ctx context.Context, _ *LogoutInput) (*LogoutOutput, error) {
 		principal, ok := platformauth.PrincipalFrom(ctx)
@@ -45,4 +61,11 @@ func (r Routes) Register(reg httpplatform.Registrar) error {
 		return &LogoutOutput{SetCookie: r.cookies.ClearSessionCookies()}, nil
 	})
 	return nil
+}
+
+func (r Routes) sessionOutput(tokens application.Tokens) *SessionOutput {
+	out := &SessionOutput{SetCookie: r.cookies.SessionCookies(tokens)}
+	out.Body.AccessExpiresAt = tokens.AccessExpiry
+	out.Body.RefreshExpiresAt = tokens.RefreshExpiry
+	return out
 }

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 
+	platformauth "{{.Module}}/backend/internal/platform/auth"
 	"{{.Module}}/backend/internal/platform/config"
 	platformerrors "{{.Module}}/backend/internal/platform/errors"
 )
@@ -34,6 +36,43 @@ func InstallMiddleware(e *echo.Echo, logger *zap.Logger, cfg config.Config) {
 		},
 	}))
 	e.HTTPErrorHandler = ProblemHandler(logger)
+}
+
+// AccessTokenVerifier is deliberately small so the HTTP boundary does not
+// know which token implementation is used by bootstrap.
+type AccessTokenVerifier interface { Verify(context.Context, string) (platformauth.Principal, error) }
+
+func PrincipalMiddleware(verifier AccessTokenVerifier) echo.MiddlewareFunc {
+	if verifier == nil { panic("access token verifier is required") }
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			token := ""
+			if cookie, err := c.Cookie("access_token"); err == nil { token = cookie.Value }
+			if token != "" {
+				principal, err := verifier.Verify(c.Request().Context(), token)
+				if err != nil { return platformerrors.New(platformerrors.Unauthenticated, "invalid_access_token", "Authentication is required") }
+				c.SetRequest(c.Request().WithContext(platformauth.WithPrincipal(c.Request().Context(), principal)))
+			}
+			return next(c)
+		}
+	}
+}
+
+// CSRFMiddleware uses the double-submit pattern: the readable, host-only CSRF
+// cookie must match the request header for unsafe methods. Access and refresh
+// cookies remain HttpOnly and are never exposed to JavaScript.
+func CSRFMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			switch c.Request().Method { case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace: return next(c) }
+			if _, err := c.Cookie("access_token"); err != nil {
+				if _, refreshErr := c.Cookie("refresh_token"); refreshErr != nil { return next(c) }
+			}
+			cookie, err := c.Cookie("csrf_token")
+			if err != nil || cookie.Value == "" || c.Request().Header.Get("X-CSRF-Token") == "" || cookie.Value != c.Request().Header.Get("X-CSRF-Token") { return platformerrors.New(platformerrors.Forbidden, "csrf_failed", "CSRF validation failed") }
+			return next(c)
+		}
+	}
 }
 
 func ProblemHandler(logger *zap.Logger) echo.HTTPErrorHandler {

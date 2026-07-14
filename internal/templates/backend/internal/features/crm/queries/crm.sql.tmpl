@@ -1,14 +1,57 @@
+-- name: CreateCRMCompany :exec
+INSERT INTO crm_companies (id, organization_id, name, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}});
+
+-- name: UpdateCRMCompany :execrows
+UPDATE crm_companies SET name = {{if eq .Database "postgres"}}$1 WHERE organization_id = $2 AND id = $3{{else}}? WHERE organization_id = ? AND id = ?{{end}};
+
+-- name: CreateCRMContact :exec
+INSERT INTO crm_contacts (id, organization_id, name, email, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5{{else}}?, ?, ?, ?, ?{{end}});
+
+-- name: CreateCRMPipeline :exec
+INSERT INTO crm_pipelines (id, organization_id, name, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}});
+
+-- name: CreateCRMStage :exec
+INSERT INTO crm_stages (id, organization_id, pipeline_id, name, position, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6{{else}}?, ?, ?, ?, ?, ?{{end}});
+
+-- name: FindCRMPipeline :one
+SELECT id, organization_id, name, created_at FROM crm_pipelines
+WHERE organization_id = {{if eq .Database "postgres"}}$1 AND id = $2{{else}}? AND id = ?{{end}};
+
+-- name: CreateCRMDeal :exec
+INSERT INTO crm_deals (id, organization_id, company_id, pipeline_id, stage_id, name, value_cents, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6, $7, $8{{else}}?, ?, ?, ?, ?, ?, ?, ?{{end}});
+
+-- name: CreateCRMActivity :exec
+INSERT INTO crm_activities (id, organization_id, deal_id, kind, note, occurred_at, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6, $7{{else}}?, ?, ?, ?, ?, ?, ?{{end}});
+
+-- name: FindCRMCompany :one
+SELECT id, organization_id, name, created_at FROM crm_companies
+WHERE organization_id = {{if eq .Database "postgres"}}$1 AND id = $2{{else}}? AND id = ?{{end}};
+
+-- name: FindCRMStage :one
+SELECT id, organization_id, pipeline_id, name, position, created_at FROM crm_stages
+WHERE organization_id = {{if eq .Database "postgres"}}$1 AND id = $2{{else}}? AND id = ?{{end}};
+
+-- name: FindCRMDeal :one
+SELECT id, organization_id, company_id, pipeline_id, stage_id, name, value_cents, created_at FROM crm_deals
+WHERE organization_id = {{if eq .Database "postgres"}}$1 AND id = $2{{else}}? AND id = ?{{end}};
+
 -- name: ListCRMCompanies :many
 SELECT id, organization_id, name, created_at FROM crm_companies
-WHERE organization_id = sqlc.arg(organization_id) AND (name > sqlc.arg(after_name) OR (name = sqlc.arg(after_name) AND id > sqlc.arg(after_id))) ORDER BY name, id LIMIT sqlc.arg(page_limit);
+WHERE organization_id = {{if eq .Database "postgres"}}$1 ORDER BY name, id LIMIT $2{{else}}? ORDER BY name, id LIMIT ?{{end}};
 -- name: ListCRMContacts :many
 SELECT id, organization_id, company_id, name, email, created_at FROM crm_contacts
-WHERE organization_id = sqlc.arg(organization_id) AND (name > sqlc.arg(after_name) OR (name = sqlc.arg(after_name) AND id > sqlc.arg(after_id))) ORDER BY name, id LIMIT sqlc.arg(page_limit);
+WHERE organization_id = {{if eq .Database "postgres"}}$1 ORDER BY name, id LIMIT $2{{else}}? ORDER BY name, id LIMIT ?{{end}};
 -- name: ListCRMPipelines :many
-SELECT id, organization_id, name, created_at FROM crm_pipelines WHERE organization_id = sqlc.arg(organization_id) ORDER BY name, id LIMIT sqlc.arg(page_limit);
+SELECT id, organization_id, name, created_at FROM crm_pipelines WHERE organization_id = {{if eq .Database "postgres"}}$1 ORDER BY name, id LIMIT $2{{else}}? ORDER BY name, id LIMIT ?{{end}};
 -- name: ListCRMStages :many
-SELECT id, organization_id, pipeline_id, name, position, created_at FROM crm_stages WHERE organization_id = sqlc.arg(organization_id) ORDER BY position, id LIMIT sqlc.arg(page_limit);
+SELECT id, organization_id, pipeline_id, name, position, created_at FROM crm_stages WHERE organization_id = {{if eq .Database "postgres"}}$1 ORDER BY position, id LIMIT $2{{else}}? ORDER BY position, id LIMIT ?{{end}};
 -- name: ListCRMDeals :many
-SELECT id, organization_id, company_id, pipeline_id, stage_id, name, value_cents, created_at FROM crm_deals WHERE organization_id = sqlc.arg(organization_id) ORDER BY created_at, id LIMIT sqlc.arg(page_limit);
+SELECT id, organization_id, company_id, pipeline_id, stage_id, name, value_cents, created_at FROM crm_deals WHERE organization_id = {{if eq .Database "postgres"}}$1 ORDER BY created_at, id LIMIT $2{{else}}? ORDER BY created_at, id LIMIT ?{{end}};
 -- name: ListCRMActivities :many
-SELECT id, organization_id, deal_id, kind, note, occurred_at, created_at FROM crm_activities WHERE organization_id = sqlc.arg(organization_id) ORDER BY occurred_at, id LIMIT sqlc.arg(page_limit);
+SELECT id, organization_id, deal_id, kind, note, occurred_at, created_at FROM crm_activities WHERE organization_id = {{if eq .Database "postgres"}}$1 ORDER BY occurred_at, id LIMIT $2{{else}}? ORDER BY occurred_at, id LIMIT ?{{end}};

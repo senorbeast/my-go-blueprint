@@ -5,14 +5,31 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"{{.Module}}/backend/internal/platform/config"
+	"{{.Module}}/backend/internal/platform/database"
 	"{{.Module}}/backend/internal/platform/jobs"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	cfg, err := config.Load()
+	if err != nil { log.Fatal(err) }
+	db, err := database.Open(ctx, cfg.DatabaseURL)
+	if err != nil { log.Fatal(err) }
+	defer db.Close() //nolint:errcheck
 	registry := jobs.NewRegistry()
+	worker := jobs.NewWorker(jobs.NewSQLStore(db.SQL()), registry, 30*time.Second)
 	log.Printf("worker ready with %d registered handlers", registry.Count())
-	<-ctx.Done()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done(): return
+		case <-tick.C:
+			if _, err := worker.RunOnce(ctx); err != nil { log.Printf("run job: %v", err) }
+		}
+	}
 }

@@ -25,10 +25,48 @@ func (fixedIDs) New() string { return "id" }
 type unusedIssuer struct{}
 func (unusedIssuer) Issue(context.Context, platformauth.Principal, time.Time) (string, error) { return "", errors.New("unexpected issue") }
 
+type recordingRepository struct{ session domain.Session; family domain.RefreshFamily; token domain.RefreshToken }
+func (r *recordingRepository) Create(_ context.Context, session domain.Session, family domain.RefreshFamily, token domain.RefreshToken) error { r.session, r.family, r.token = session, family, token; return nil }
+func (*recordingRepository) Rotate(context.Context, domain.Rotation) (domain.RotationResult, error) { return domain.RotationResult{}, errors.New("unexpected rotate") }
+func (*recordingRepository) RevokeSession(context.Context, platformauth.SessionID, time.Time) error { return nil }
+func (*recordingRepository) RevokeFamily(context.Context, domain.FamilyID, time.Time) error { return nil }
+func (*recordingRepository) RevokeAllForUser(context.Context, platformauth.UserID, time.Time) error { return nil }
+type recordingIssuer struct{ principal platformauth.Principal }
+func (i *recordingIssuer) Issue(_ context.Context, principal platformauth.Principal, _ time.Time) (string, error) { i.principal = principal; return "access", nil }
+
+type rotatedRepository struct{ rotation domain.Rotation }
+func (*rotatedRepository) Create(context.Context, domain.Session, domain.RefreshFamily, domain.RefreshToken) error { return errors.New("unexpected create") }
+func (r *rotatedRepository) Rotate(_ context.Context, rotation domain.Rotation) (domain.RotationResult, error) { r.rotation = rotation; return domain.RotationResult{Session: domain.Session{ID: "session", UserID: "user", OrganizationID: "organization", ExpiresAt: time.Unix(1000, 0)}, Family: domain.RefreshFamily{ID: "family", SessionID: "session"}}, nil }
+func (*rotatedRepository) RevokeSession(context.Context, platformauth.SessionID, time.Time) error { return nil }
+func (*rotatedRepository) RevokeFamily(context.Context, domain.FamilyID, time.Time) error { return nil }
+func (*rotatedRepository) RevokeAllForUser(context.Context, platformauth.UserID, time.Time) error { return nil }
+
+func TestStartPersistsOneLinkedSessionFamilyAndToken(t *testing.T) {
+	repository := &recordingRepository{}
+	issuer := &recordingIssuer{}
+	service := New(repository, fixedClock{time.Unix(100, 0)}, fixedSecrets{}, fixedIDs{}, issuer, time.Minute, time.Hour)
+	tokens, err := service.Start(context.Background(), "user", "organization")
+	if err != nil { t.Fatal(err) }
+	if tokens.AccessToken != "access" || tokens.RefreshToken != "replacement" { t.Fatalf("tokens = %#v", tokens) }
+	if repository.session.ID == "" || repository.family.SessionID != repository.session.ID || repository.token.FamilyID != repository.family.ID { t.Fatalf("persisted session graph = %#v / %#v / %#v", repository.session, repository.family, repository.token) }
+	if issuer.principal.SessionID != repository.session.ID || issuer.principal.OrganizationID != "organization" { t.Fatalf("access principal = %#v", issuer.principal) }
+}
+
 func TestRotateRevokesFamilyOnReuse(t *testing.T) {
 	repository := &reuseRepository{}
 	service := New(repository, fixedClock{time.Unix(100, 0)}, fixedSecrets{}, fixedIDs{}, unusedIssuer{}, time.Minute, time.Hour)
 	_, err := service.Rotate(context.Background(), "replayed")
 	if !errors.Is(err, domain.ErrRefreshTokenReuse) { t.Fatalf("Rotate() error = %v", err) }
 	if !repository.revoked { t.Fatal("refresh-token family was not revoked") }
+}
+
+func TestRotateIssuesReplacementForTheStoredSession(t *testing.T) {
+	repository := &rotatedRepository{}
+	issuer := &recordingIssuer{}
+	service := New(repository, fixedClock{time.Unix(100, 0)}, fixedSecrets{}, fixedIDs{}, issuer, time.Minute, time.Hour)
+	tokens, err := service.Rotate(context.Background(), "presented")
+	if err != nil { t.Fatal(err) }
+	if tokens.AccessToken != "access" || tokens.RefreshToken != "replacement" { t.Fatalf("tokens = %#v", tokens) }
+	if repository.rotation.Replacement.FamilyID != "" { t.Fatalf("replacement family should be assigned by persistence, got %#v", repository.rotation.Replacement) }
+	if issuer.principal.SessionID != "session" || issuer.principal.UserID != "user" || issuer.principal.OrganizationID != "organization" { t.Fatalf("issued principal = %#v", issuer.principal) }
 }

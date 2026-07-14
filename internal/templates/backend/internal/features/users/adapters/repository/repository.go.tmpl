@@ -1,5 +1,25 @@
 package repository
 
-// Adapter intentionally depends on generated dbgen while domain owns the Repository port.
-// The generator supplies dialect-specific mappings after sqlc generation.
+import(
+ "context"
+ "{{.Module}}/backend/internal/features/users/domain"
+ "{{.Module}}/backend/internal/platform/pagination"
+)
 
+// Store is the dialect-specific persistence seam. It intentionally exposes
+// credentials only to the users application, never to transport adapters.
+type Store interface{
+ Create(context.Context,domain.User)error
+ CreateWithCredential(context.Context,domain.User,string)error
+ FindByID(context.Context,string,domain.ID)(domain.User,error)
+ FindCredentialByEmail(context.Context,domain.Email)(domain.Credential,error)
+ List(context.Context,domain.ListQuery)(pagination.Page[domain.User],error)
+}
+type Repository struct{store Store}
+func New(store Store)*Repository{return &Repository{store}}
+func(r *Repository)Create(ctx context.Context,u domain.User)error{return r.store.Create(ctx,u)}
+func(r *Repository)CreateWithCredential(ctx context.Context,u domain.User,passwordHash string)error{return r.store.CreateWithCredential(ctx,u,passwordHash)}
+func(r *Repository)FindByID(ctx context.Context,organizationID string,id domain.ID)(domain.User,error){return r.store.FindByID(ctx,organizationID,id)}
+func(r *Repository)FindCredentialByEmail(ctx context.Context,email domain.Email)(domain.Credential,error){return r.store.FindCredentialByEmail(ctx,email)}
+func(r *Repository)List(ctx context.Context,q domain.ListQuery)(pagination.Page[domain.User],error){return r.store.List(ctx,q)}
+var _ domain.Repository=(*Repository)(nil)

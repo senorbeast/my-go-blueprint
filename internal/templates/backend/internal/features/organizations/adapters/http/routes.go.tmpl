@@ -7,6 +7,7 @@ import (
 	"{{.Module}}/backend/internal/features/organizations/application"
 	"{{.Module}}/backend/internal/features/organizations/domain"
 	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 )
 
@@ -14,7 +15,8 @@ type Routes struct{ service *application.Service }
 
 func New(service *application.Service) Routes { return Routes{service: service} }
 func (Routes) Descriptor() httpplatform.Descriptor {
-	return httpplatform.Descriptor{Prefix: "/api/v1/organizations", Tags: []string{"Organizations"}, Authentication: httpplatform.Required}
+	permission := authorization.Permission("organizations.roles.assign")
+	return httpplatform.Descriptor{Prefix: "/api/v1/organizations", Tags: []string{"Organizations"}, Authentication: httpplatform.Required, Permission: &permission}
 }
 func (r Routes) Register(reg httpplatform.Registrar) error {
 	httpplatform.Register(reg, huma.Operation{OperationID: "create-organization", Method: "POST", Path: "/api/v1/organizations", Tags: []string{"Organizations"}}, func(ctx context.Context, in *CreateOrganizationInput) (*CreateOrganizationOutput, error) {

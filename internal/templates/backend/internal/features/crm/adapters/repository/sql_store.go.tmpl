@@ -1,0 +1,213 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	{{if eq .Database "postgres"}}
+	"github.com/google/uuid"
+	{{else}}
+	"encoding/hex"
+	"strings"
+	{{end}}
+
+	"{{.Module}}/backend/internal/features/crm/domain"
+	"{{.Module}}/backend/internal/platform/database/dbgen"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+// SQLStore is the CRM read adapter. Its statements live exclusively in the
+// sqlc catalog; this layer only translates generated records at the dialect
+// boundary and preserves tenant scope supplied by the application service.
+type SQLStore struct{ db *sql.DB }
+func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
+
+func (s *SQLStore) ListCompanies(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.Company], error) {
+	if err := requireLimit(query); err != nil { return pagination.Page[domain.Company]{}, err }
+	rows, err := listCompanies(ctx, dbgen.New(s.db), query); if err != nil { return pagination.Page[domain.Company]{}, fmt.Errorf("list CRM companies: %w", err) }
+	items := make([]domain.Company, 0, len(rows)); for _, row := range rows { items = append(items, companyFrom(row)) }; return companyPage(items, query.Page.Limit), nil
+}
+func (s *SQLStore) ListContacts(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.Contact], error) {
+	if err := requireLimit(query); err != nil { return pagination.Page[domain.Contact]{}, err }
+	rows, err := listContacts(ctx, dbgen.New(s.db), query); if err != nil { return pagination.Page[domain.Contact]{}, fmt.Errorf("list CRM contacts: %w", err) }
+	items := make([]domain.Contact, 0, len(rows)); for _, row := range rows { item, err := contactFrom(row); if err != nil { return pagination.Page[domain.Contact]{}, err }; items = append(items, item) }; return contactPage(items, query.Page.Limit), nil
+}
+func (s *SQLStore) ListPipelines(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.Pipeline], error) {
+	if err := requireLimit(query); err != nil { return pagination.Page[domain.Pipeline]{}, err }
+	rows, err := listPipelines(ctx, dbgen.New(s.db), query); if err != nil { return pagination.Page[domain.Pipeline]{}, fmt.Errorf("list CRM pipelines: %w", err) }
+	items := make([]domain.Pipeline, 0, len(rows)); for _, row := range rows { items = append(items, pipelineFrom(row)) }; return pipelinePage(items, query.Page.Limit), nil
+}
+func (s *SQLStore) ListStages(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.Stage], error) {
+	if err := requireLimit(query); err != nil { return pagination.Page[domain.Stage]{}, err }
+	rows, err := listStages(ctx, dbgen.New(s.db), query); if err != nil { return pagination.Page[domain.Stage]{}, fmt.Errorf("list CRM stages: %w", err) }
+	items := make([]domain.Stage, 0, len(rows)); for _, row := range rows { item, err := stageFrom(row); if err != nil { return pagination.Page[domain.Stage]{}, err }; items = append(items, item) }; return stagePage(items, query.Page.Limit), nil
+}
+func (s *SQLStore) ListDeals(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.Deal], error) {
+	if err := requireLimit(query); err != nil { return pagination.Page[domain.Deal]{}, err }
+	rows, err := listDeals(ctx, dbgen.New(s.db), query); if err != nil { return pagination.Page[domain.Deal]{}, fmt.Errorf("list CRM deals: %w", err) }
+	items := make([]domain.Deal, 0, len(rows)); for _, row := range rows { item, err := dealFrom(row); if err != nil { return pagination.Page[domain.Deal]{}, err }; items = append(items, item) }; return dealPage(items, query.Page.Limit), nil
+}
+func (s *SQLStore) ListActivities(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.Activity], error) {
+	if err := requireLimit(query); err != nil { return pagination.Page[domain.Activity]{}, err }
+	rows, err := listActivities(ctx, dbgen.New(s.db), query); if err != nil { return pagination.Page[domain.Activity]{}, fmt.Errorf("list CRM activities: %w", err) }
+	items := make([]domain.Activity, 0, len(rows)); for _, row := range rows { item, err := activityFrom(row); if err != nil { return pagination.Page[domain.Activity]{}, err }; items = append(items, item) }; return activityPage(items, query.Page.Limit), nil
+}
+
+func requireLimit(query domain.ListQuery) error { if query.Page.Limit == 0 { return fmt.Errorf("CRM list limit is required") }; return nil }
+func companyPage(items []domain.Company, limit pagination.Limit) pagination.Page[domain.Company] { page := pagination.Page[domain.Company]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit] }; return page }
+func contactPage(items []domain.Contact, limit pagination.Limit) pagination.Page[domain.Contact] { page := pagination.Page[domain.Contact]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit] }; return page }
+func pipelinePage(items []domain.Pipeline, limit pagination.Limit) pagination.Page[domain.Pipeline] { page := pagination.Page[domain.Pipeline]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit] }; return page }
+func stagePage(items []domain.Stage, limit pagination.Limit) pagination.Page[domain.Stage] { page := pagination.Page[domain.Stage]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit] }; return page }
+func dealPage(items []domain.Deal, limit pagination.Limit) pagination.Page[domain.Deal] { page := pagination.Page[domain.Deal]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit] }; return page }
+func activityPage(items []domain.Activity, limit pagination.Limit) pagination.Page[domain.Activity] { page := pagination.Page[domain.Activity]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit] }; return page }
+
+func (s *SQLStore) CreateCompany(ctx context.Context, company domain.Company) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(company.ID)); if err != nil { return fmt.Errorf("parse company ID: %w", err) }; organizationID, err := uuid.Parse(string(company.OrganizationID)); if err != nil { return fmt.Errorf("parse company organization ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMCompany(ctx, dbgen.CreateCRMCompanyParams{ID: id, OrganizationID: organizationID, Name: company.Name, CreatedAt: company.CreatedAt})
+	{{else}}
+	id, err := idValue(string(company.ID)); if err != nil { return fmt.Errorf("parse company ID: %w", err) }; organizationID, err := idValue(string(company.OrganizationID)); if err != nil { return fmt.Errorf("parse company organization ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMCompany(ctx, dbgen.CreateCRMCompanyParams{ID: id, OrganizationID: organizationID, Name: company.Name, CreatedAt: company.CreatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("create CRM company: %w", err) }; return nil
+}
+func (s *SQLStore) UpdateCompany(ctx context.Context, company domain.Company) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(company.ID)); if err != nil { return fmt.Errorf("parse company ID: %w", err) }; organizationID, err := uuid.Parse(string(company.OrganizationID)); if err != nil { return fmt.Errorf("parse company organization ID: %w", err) }
+	updated, err := dbgen.New(s.db).UpdateCRMCompany(ctx, dbgen.UpdateCRMCompanyParams{Name: company.Name, OrganizationID: organizationID, ID: id})
+	{{else}}
+	id, err := idValue(string(company.ID)); if err != nil { return fmt.Errorf("parse company ID: %w", err) }; organizationID, err := idValue(string(company.OrganizationID)); if err != nil { return fmt.Errorf("parse company organization ID: %w", err) }
+	updated, err := dbgen.New(s.db).UpdateCRMCompany(ctx, dbgen.UpdateCRMCompanyParams{Name: company.Name, OrganizationID: organizationID, ID: id})
+	{{end}}
+	if err != nil { return fmt.Errorf("update CRM company: %w", err) }
+	if updated == 0 { return domain.ErrNotFound }
+	return nil
+}
+func (s *SQLStore) CreateContact(ctx context.Context, contact domain.Contact) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(contact.ID)); if err != nil { return fmt.Errorf("parse contact ID: %w", err) }; organizationID, err := uuid.Parse(string(contact.OrganizationID)); if err != nil { return fmt.Errorf("parse contact organization ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMContact(ctx, dbgen.CreateCRMContactParams{ID: id, OrganizationID: organizationID, Name: contact.Name, Email: contact.Email, CreatedAt: contact.CreatedAt})
+	{{else}}
+	id, err := idValue(string(contact.ID)); if err != nil { return fmt.Errorf("parse contact ID: %w", err) }; organizationID, err := idValue(string(contact.OrganizationID)); if err != nil { return fmt.Errorf("parse contact organization ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMContact(ctx, dbgen.CreateCRMContactParams{ID: id, OrganizationID: organizationID, Name: contact.Name, Email: contact.Email, CreatedAt: contact.CreatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("create CRM contact: %w", err) }; return nil
+}
+func (s *SQLStore) CreatePipeline(ctx context.Context, pipeline domain.Pipeline) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(pipeline.ID)); if err != nil { return fmt.Errorf("parse pipeline ID: %w", err) }; organizationID, err := uuid.Parse(string(pipeline.OrganizationID)); if err != nil { return fmt.Errorf("parse pipeline organization ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMPipeline(ctx, dbgen.CreateCRMPipelineParams{ID: id, OrganizationID: organizationID, Name: pipeline.Name, CreatedAt: pipeline.CreatedAt})
+	{{else}}
+	id, err := idValue(string(pipeline.ID)); if err != nil { return fmt.Errorf("parse pipeline ID: %w", err) }; organizationID, err := idValue(string(pipeline.OrganizationID)); if err != nil { return fmt.Errorf("parse pipeline organization ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMPipeline(ctx, dbgen.CreateCRMPipelineParams{ID: id, OrganizationID: organizationID, Name: pipeline.Name, CreatedAt: pipeline.CreatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("create CRM pipeline: %w", err) }; return nil
+}
+func (s *SQLStore) CreateStage(ctx context.Context, stage domain.Stage) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(stage.ID)); if err != nil { return fmt.Errorf("parse stage ID: %w", err) }; organizationID, err := uuid.Parse(string(stage.OrganizationID)); if err != nil { return fmt.Errorf("parse stage organization ID: %w", err) }; pipelineID, err := uuid.Parse(string(stage.PipelineID)); if err != nil { return fmt.Errorf("parse stage pipeline ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMStage(ctx, dbgen.CreateCRMStageParams{ID: id, OrganizationID: organizationID, PipelineID: pipelineID, Name: stage.Name, Position: int32(stage.Position), CreatedAt: stage.CreatedAt})
+	{{else}}
+	id, err := idValue(string(stage.ID)); if err != nil { return fmt.Errorf("parse stage ID: %w", err) }; organizationID, err := idValue(string(stage.OrganizationID)); if err != nil { return fmt.Errorf("parse stage organization ID: %w", err) }; pipelineID, err := idValue(string(stage.PipelineID)); if err != nil { return fmt.Errorf("parse stage pipeline ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMStage(ctx, dbgen.CreateCRMStageParams{ID: id, OrganizationID: organizationID, PipelineID: pipelineID, Name: stage.Name, Position: int32(stage.Position), CreatedAt: stage.CreatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("create CRM stage: %w", err) }; return nil
+}
+func (s *SQLStore) CreateDeal(ctx context.Context, deal domain.Deal) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(deal.ID)); if err != nil { return fmt.Errorf("parse deal ID: %w", err) }; organizationID, err := uuid.Parse(string(deal.OrganizationID)); if err != nil { return fmt.Errorf("parse deal organization ID: %w", err) }; companyID, err := uuid.Parse(string(deal.CompanyID)); if err != nil { return fmt.Errorf("parse deal company ID: %w", err) }; pipelineID, err := uuid.Parse(string(deal.PipelineID)); if err != nil { return fmt.Errorf("parse deal pipeline ID: %w", err) }; stageID, err := uuid.Parse(string(deal.StageID)); if err != nil { return fmt.Errorf("parse deal stage ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMDeal(ctx, dbgen.CreateCRMDealParams{ID: id, OrganizationID: organizationID, CompanyID: companyID, PipelineID: pipelineID, StageID: stageID, Name: deal.Name, ValueCents: deal.ValueCents, CreatedAt: deal.CreatedAt})
+	{{else}}
+	id, err := idValue(string(deal.ID)); if err != nil { return fmt.Errorf("parse deal ID: %w", err) }; organizationID, err := idValue(string(deal.OrganizationID)); if err != nil { return fmt.Errorf("parse deal organization ID: %w", err) }; companyID, err := idValue(string(deal.CompanyID)); if err != nil { return fmt.Errorf("parse deal company ID: %w", err) }; pipelineID, err := idValue(string(deal.PipelineID)); if err != nil { return fmt.Errorf("parse deal pipeline ID: %w", err) }; stageID, err := idValue(string(deal.StageID)); if err != nil { return fmt.Errorf("parse deal stage ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMDeal(ctx, dbgen.CreateCRMDealParams{ID: id, OrganizationID: organizationID, CompanyID: companyID, PipelineID: pipelineID, StageID: stageID, Name: deal.Name, ValueCents: deal.ValueCents, CreatedAt: deal.CreatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("create CRM deal: %w", err) }; return nil
+}
+func (s *SQLStore) CreateActivity(ctx context.Context, activity domain.Activity) error {
+	{{if eq .Database "postgres"}}
+	id, err := uuid.Parse(string(activity.ID)); if err != nil { return fmt.Errorf("parse activity ID: %w", err) }; organizationID, err := uuid.Parse(string(activity.OrganizationID)); if err != nil { return fmt.Errorf("parse activity organization ID: %w", err) }; dealID, err := uuid.Parse(string(activity.DealID)); if err != nil { return fmt.Errorf("parse activity deal ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMActivity(ctx, dbgen.CreateCRMActivityParams{ID: id, OrganizationID: organizationID, DealID: dealID, Kind: activity.Kind, Note: activity.Note, OccurredAt: activity.OccurredAt, CreatedAt: activity.CreatedAt})
+	{{else}}
+	id, err := idValue(string(activity.ID)); if err != nil { return fmt.Errorf("parse activity ID: %w", err) }; organizationID, err := idValue(string(activity.OrganizationID)); if err != nil { return fmt.Errorf("parse activity organization ID: %w", err) }; dealID, err := idValue(string(activity.DealID)); if err != nil { return fmt.Errorf("parse activity deal ID: %w", err) }
+	err = dbgen.New(s.db).CreateCRMActivity(ctx, dbgen.CreateCRMActivityParams{ID: id, OrganizationID: organizationID, DealID: dealID, Kind: activity.Kind, Note: activity.Note, OccurredAt: activity.OccurredAt, CreatedAt: activity.CreatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("create CRM activity: %w", err) }; return nil
+}
+func (s *SQLStore) FindCompany(ctx context.Context, organizationID domain.OrganizationID, companyID domain.ID) (domain.Company, error) {
+	{{if eq .Database "postgres"}}
+	organization, err := uuid.Parse(string(organizationID)); if err != nil { return domain.Company{}, fmt.Errorf("parse company organization ID: %w", err) }; id, err := uuid.Parse(string(companyID)); if err != nil { return domain.Company{}, fmt.Errorf("parse company ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMCompany(ctx, dbgen.FindCRMCompanyParams{OrganizationID: organization, ID: id})
+	{{else}}
+	organization, err := idValue(string(organizationID)); if err != nil { return domain.Company{}, fmt.Errorf("parse company organization ID: %w", err) }; id, err := idValue(string(companyID)); if err != nil { return domain.Company{}, fmt.Errorf("parse company ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMCompany(ctx, dbgen.FindCRMCompanyParams{OrganizationID: organization, ID: id})
+	{{end}}
+	if errors.Is(err, sql.ErrNoRows) { return domain.Company{}, domain.ErrNotFound }
+	if err != nil { return domain.Company{}, fmt.Errorf("find CRM company: %w", err) }; return companyFrom(row), nil
+}
+func (*SQLStore) FindContact(context.Context, domain.OrganizationID, domain.ID) (domain.Contact, error) { return domain.Contact{}, fmt.Errorf("CRM contact lookup is not composed") }
+func (s *SQLStore) FindPipeline(ctx context.Context, organizationID domain.OrganizationID, pipelineID domain.ID) (domain.Pipeline, error) {
+	{{if eq .Database "postgres"}}
+	organization, err := uuid.Parse(string(organizationID)); if err != nil { return domain.Pipeline{}, fmt.Errorf("parse pipeline organization ID: %w", err) }; id, err := uuid.Parse(string(pipelineID)); if err != nil { return domain.Pipeline{}, fmt.Errorf("parse pipeline ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMPipeline(ctx, dbgen.FindCRMPipelineParams{OrganizationID: organization, ID: id})
+	{{else}}
+	organization, err := idValue(string(organizationID)); if err != nil { return domain.Pipeline{}, fmt.Errorf("parse pipeline organization ID: %w", err) }; id, err := idValue(string(pipelineID)); if err != nil { return domain.Pipeline{}, fmt.Errorf("parse pipeline ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMPipeline(ctx, dbgen.FindCRMPipelineParams{OrganizationID: organization, ID: id})
+	{{end}}
+	if err != nil { return domain.Pipeline{}, fmt.Errorf("find CRM pipeline: %w", err) }; return pipelineFrom(row), nil
+}
+func (s *SQLStore) FindStage(ctx context.Context, organizationID domain.OrganizationID, stageID domain.ID) (domain.Stage, error) {
+	{{if eq .Database "postgres"}}
+	organization, err := uuid.Parse(string(organizationID)); if err != nil { return domain.Stage{}, fmt.Errorf("parse stage organization ID: %w", err) }; id, err := uuid.Parse(string(stageID)); if err != nil { return domain.Stage{}, fmt.Errorf("parse stage ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMStage(ctx, dbgen.FindCRMStageParams{OrganizationID: organization, ID: id})
+	{{else}}
+	organization, err := idValue(string(organizationID)); if err != nil { return domain.Stage{}, fmt.Errorf("parse stage organization ID: %w", err) }; id, err := idValue(string(stageID)); if err != nil { return domain.Stage{}, fmt.Errorf("parse stage ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMStage(ctx, dbgen.FindCRMStageParams{OrganizationID: organization, ID: id})
+	{{end}}
+	if err != nil { return domain.Stage{}, fmt.Errorf("find CRM stage: %w", err) }; return stageFrom(row)
+}
+func (s *SQLStore) FindDeal(ctx context.Context, organizationID domain.OrganizationID, dealID domain.ID) (domain.Deal, error) {
+	{{if eq .Database "postgres"}}
+	organization, err := uuid.Parse(string(organizationID)); if err != nil { return domain.Deal{}, fmt.Errorf("parse deal organization ID: %w", err) }; id, err := uuid.Parse(string(dealID)); if err != nil { return domain.Deal{}, fmt.Errorf("parse deal ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMDeal(ctx, dbgen.FindCRMDealParams{OrganizationID: organization, ID: id})
+	{{else}}
+	organization, err := idValue(string(organizationID)); if err != nil { return domain.Deal{}, fmt.Errorf("parse deal organization ID: %w", err) }; id, err := idValue(string(dealID)); if err != nil { return domain.Deal{}, fmt.Errorf("parse deal ID: %w", err) }
+	row, err := dbgen.New(s.db).FindCRMDeal(ctx, dbgen.FindCRMDealParams{OrganizationID: organization, ID: id})
+	{{end}}
+	if err != nil { return domain.Deal{}, fmt.Errorf("find CRM deal: %w", err) }; return dealFrom(row)
+}
+func (*SQLStore) FindActivity(context.Context, domain.OrganizationID, domain.ID) (domain.Activity, error) { return domain.Activity{}, fmt.Errorf("CRM activity lookup is not composed") }
+
+{{if eq .Database "postgres"}}
+func organizationValue(value domain.OrganizationID) (uuid.UUID, error) { return uuid.Parse(string(value)) }
+func listCompanies(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmCompany, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMCompanies(ctx, dbgen.ListCRMCompaniesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listContacts(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmContact, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMContacts(ctx, dbgen.ListCRMContactsParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listPipelines(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmPipeline, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMPipelines(ctx, dbgen.ListCRMPipelinesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listStages(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmStage, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMStages(ctx, dbgen.ListCRMStagesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listDeals(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmDeal, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMDeals(ctx, dbgen.ListCRMDealsParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listActivities(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmActivity, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMActivities(ctx, dbgen.ListCRMActivitiesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func companyFrom(row dbgen.CrmCompany) domain.Company { return domain.Company{ID: domain.ID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), Name: row.Name, CreatedAt: row.CreatedAt} }
+func contactFrom(row dbgen.CrmContact) (domain.Contact, error) { item := domain.Contact{ID: domain.ID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), Name: row.Name, Email: row.Email, CreatedAt: row.CreatedAt}; if row.CompanyID.Valid { value := domain.ID(row.CompanyID.UUID.String()); item.CompanyID = &value }; return item, nil }
+func pipelineFrom(row dbgen.CrmPipeline) domain.Pipeline { return domain.Pipeline{ID: domain.ID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), Name: row.Name, CreatedAt: row.CreatedAt} }
+func stageFrom(row dbgen.CrmStage) (domain.Stage, error) { return domain.Stage{ID: domain.ID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), PipelineID: domain.ID(row.PipelineID.String()), Name: row.Name, Position: int(row.Position), CreatedAt: row.CreatedAt}, nil }
+func dealFrom(row dbgen.CrmDeal) (domain.Deal, error) { return domain.Deal{ID: domain.ID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), CompanyID: domain.ID(row.CompanyID.String()), PipelineID: domain.ID(row.PipelineID.String()), StageID: domain.ID(row.StageID.String()), Name: row.Name, ValueCents: row.ValueCents, CreatedAt: row.CreatedAt}, nil }
+func activityFrom(row dbgen.CrmActivity) (domain.Activity, error) { return domain.Activity{ID: domain.ID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), DealID: domain.ID(row.DealID.String()), Kind: row.Kind, Note: row.Note, OccurredAt: row.OccurredAt, CreatedAt: row.CreatedAt}, nil }
+{{else}}
+func idValue(value string) ([]byte, error) { compact := strings.ReplaceAll(value, "-", ""); if len(compact) != 32 { return nil, fmt.Errorf("invalid UUID %q", value) }; return hex.DecodeString(compact) }
+func stringID(value []byte) (string, error) { if len(value) != 16 { return "", fmt.Errorf("unexpected UUID byte length %d", len(value)) }; encoded := hex.EncodeToString(value); return encoded[0:8]+"-"+encoded[8:12]+"-"+encoded[12:16]+"-"+encoded[16:20]+"-"+encoded[20:32], nil }
+func organizationValue(value domain.OrganizationID) ([]byte, error) { return idValue(string(value)) }
+func listCompanies(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmCompany, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMCompanies(ctx, dbgen.ListCRMCompaniesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listContacts(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmContact, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMContacts(ctx, dbgen.ListCRMContactsParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listPipelines(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmPipeline, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMPipelines(ctx, dbgen.ListCRMPipelinesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listStages(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmStage, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMStages(ctx, dbgen.ListCRMStagesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listDeals(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmDeal, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMDeals(ctx, dbgen.ListCRMDealsParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func listActivities(ctx context.Context, q *dbgen.Queries, query domain.ListQuery) ([]dbgen.CrmActivity, error) { organization, err := organizationValue(query.OrganizationID); if err != nil { return nil, err }; return q.ListCRMActivities(ctx, dbgen.ListCRMActivitiesParams{OrganizationID: organization, Limit: int32(query.Page.Limit) + 1}) }
+func companyFrom(row dbgen.CrmCompany) domain.Company { id, _ := stringID(row.ID); organization, _ := stringID(row.OrganizationID); return domain.Company{ID: domain.ID(id), OrganizationID: domain.OrganizationID(organization), Name: row.Name, CreatedAt: row.CreatedAt} }
+func contactFrom(row dbgen.CrmContact) (domain.Contact, error) { id, err := stringID(row.ID); if err != nil { return domain.Contact{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Contact{}, err }; item := domain.Contact{ID: domain.ID(id), OrganizationID: domain.OrganizationID(organization), Name: row.Name, Email: row.Email, CreatedAt: row.CreatedAt}; if row.CompanyID.Valid { company, err := stringID([]byte(row.CompanyID.String)); if err != nil { return domain.Contact{}, err }; value := domain.ID(company); item.CompanyID = &value }; return item, nil }
+func pipelineFrom(row dbgen.CrmPipeline) domain.Pipeline { id, _ := stringID(row.ID); organization, _ := stringID(row.OrganizationID); return domain.Pipeline{ID: domain.ID(id), OrganizationID: domain.OrganizationID(organization), Name: row.Name, CreatedAt: row.CreatedAt} }
+func stageFrom(row dbgen.CrmStage) (domain.Stage, error) { id, err := stringID(row.ID); if err != nil { return domain.Stage{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Stage{}, err }; pipeline, err := stringID(row.PipelineID); if err != nil { return domain.Stage{}, err }; return domain.Stage{ID: domain.ID(id), OrganizationID: domain.OrganizationID(organization), PipelineID: domain.ID(pipeline), Name: row.Name, Position: int(row.Position), CreatedAt: row.CreatedAt}, nil }
+func dealFrom(row dbgen.CrmDeal) (domain.Deal, error) { id, err := stringID(row.ID); if err != nil { return domain.Deal{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Deal{}, err }; company, err := stringID(row.CompanyID); if err != nil { return domain.Deal{}, err }; pipeline, err := stringID(row.PipelineID); if err != nil { return domain.Deal{}, err }; stage, err := stringID(row.StageID); if err != nil { return domain.Deal{}, err }; return domain.Deal{ID: domain.ID(id), OrganizationID: domain.OrganizationID(organization), CompanyID: domain.ID(company), PipelineID: domain.ID(pipeline), StageID: domain.ID(stage), Name: row.Name, ValueCents: row.ValueCents, CreatedAt: row.CreatedAt}, nil }
+func activityFrom(row dbgen.CrmActivity) (domain.Activity, error) { id, err := stringID(row.ID); if err != nil { return domain.Activity{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Activity{}, err }; deal, err := stringID(row.DealID); if err != nil { return domain.Activity{}, err }; return domain.Activity{ID: domain.ID(id), OrganizationID: domain.OrganizationID(organization), DealID: domain.ID(deal), Kind: row.Kind, Note: row.Note, OccurredAt: row.OccurredAt, CreatedAt: row.CreatedAt}, nil }
+{{end}}
+
+var _ domain.Repository = (*SQLStore)(nil)

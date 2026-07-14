@@ -12,6 +12,9 @@ type ID string
 type Email string
 func NewEmail(value string)(Email,error){value=strings.ToLower(strings.TrimSpace(value));if _,err:=mail.ParseAddress(value);err!=nil{return "",errors.New("invalid email")};return Email(value),nil}
 type User struct{ID ID;Email Email;DisplayName string;CreatedAt time.Time}
+// Credential is deliberately kept separate from the public User projection.
+// PasswordHash must never be returned by HTTP adapters or list queries.
+type Credential struct{User User;PasswordHash string}
 type ListQuery struct{OrganizationID string;Page pagination.Request}
-type Repository interface{Create(context.Context,User)error;FindByID(context.Context,string,ID)(User,error);List(context.Context,ListQuery)(pagination.Page[User],error)}
-
+var ErrInvalidCredentials=errors.New("invalid credentials")
+type Repository interface{Create(context.Context,User)error;CreateWithCredential(context.Context,User,string)error;FindByID(context.Context,string,ID)(User,error);FindCredentialByEmail(context.Context,Email)(Credential,error);List(context.Context,ListQuery)(pagination.Page[User],error)}

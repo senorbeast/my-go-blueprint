@@ -1,0 +1,26 @@
+package authorization
+
+import (
+	"context"
+
+	organization "{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	platformauthorization "{{.Module}}/backend/internal/platform/authorization"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
+)
+
+// Authorizer resolves permissions against the principal's selected organization.
+type Authorizer struct { organizations organization.Repository }
+
+func New(organizations organization.Repository) *Authorizer { return &Authorizer{organizations: organizations} }
+
+func (a *Authorizer) Authorize(ctx context.Context, principal platformauth.Principal, permission platformauthorization.Permission, resource platformauthorization.Resource) error {
+	if principal.UserID == "" || principal.OrganizationID == "" { return platformerrors.New(platformerrors.Unauthenticated, "authentication_required", "Authentication is required") }
+	if resource.OrganizationID == "" || resource.OrganizationID != principal.OrganizationID { return platformerrors.New(platformerrors.Forbidden, "tenant_forbidden", "Access to this organization is forbidden") }
+	permissions, err := a.organizations.Permissions(ctx, organization.ID(principal.OrganizationID), principal.UserID)
+	if err != nil { return err }
+	for _, granted := range permissions { if granted == permission || granted == "platform.admin" { return nil } }
+	return platformerrors.New(platformerrors.Forbidden, "permission_forbidden", "You do not have permission to perform this action")
+}
+
+var _ platformauthorization.Authorizer = (*Authorizer)(nil)

@@ -1,0 +1,97 @@
+package jobs
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"{{.Module}}/backend/internal/platform/database/dbgen"
+	"github.com/google/uuid"
+)
+
+// SQLStore is the durable queue adapter.  It is deliberately the only jobs
+// package that knows about sqlc records and dialect-specific identifiers.
+// Workers continue to depend solely on Store.
+type SQLStore struct { db *sql.DB }
+
+func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
+
+func (s *SQLStore) Enqueue(ctx context.Context, job Job) (ID, error) {
+	return s.EnqueueAt(ctx, job, time.Now().UTC())
+}
+
+func (s *SQLStore) EnqueueAt(ctx context.Context, job Job, at time.Time) (ID, error) {
+	if job.Name == "" { return "", fmt.Errorf("job name is required") }
+	if job.MaxAttempts == 0 { job.MaxAttempts = 1 }
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return "", fmt.Errorf("begin enqueue: %w", err) }
+	defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx)
+	if job.IdempotencyKey != "" {
+		id, findErr := q.FindJobByIdempotencyKey(ctx, sql.NullString{String: job.IdempotencyKey, Valid: true})
+		if findErr == nil { return idFrom(id) }
+		if !errors.Is(findErr, sql.ErrNoRows) { return "", fmt.Errorf("find idempotent job: %w", findErr) }
+	}
+	id := newID()
+	if err = q.EnqueueJob(ctx, enqueueParams(id, job, at)); err != nil {
+		return "", fmt.Errorf("enqueue job: %w", err)
+	}
+	if job.IdempotencyKey != "" {
+		existing, findErr := q.FindJobByIdempotencyKey(ctx, sql.NullString{String: job.IdempotencyKey, Valid: true})
+		if findErr != nil { return "", fmt.Errorf("read idempotent enqueue: %w", findErr) }
+		if err = tx.Commit(); err != nil { return "", fmt.Errorf("commit idempotent enqueue: %w", err) }
+		return idFrom(existing)
+	}
+	if err = tx.Commit(); err != nil { return "", fmt.Errorf("commit enqueue: %w", err) }
+	return idFrom(id)
+}
+
+func (s *SQLStore) Claim(ctx context.Context, now time.Time, lease time.Duration) (ClaimedJob, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return ClaimedJob{}, false, fmt.Errorf("begin claim: %w", err) }
+	defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx)
+	if err = q.RecoverExpiredJobLeases(ctx, sql.NullTime{Time: now, Valid: true}); err != nil { return ClaimedJob{}, false, fmt.Errorf("recover expired leases: %w", err) }
+	row, err := q.FindAvailableJobForClaim(ctx, now)
+	if errors.Is(err, sql.ErrNoRows) { if err = tx.Commit(); err != nil { return ClaimedJob{}, false, fmt.Errorf("commit empty claim: %w", err) }; return ClaimedJob{}, false, nil }
+	if err != nil { return ClaimedJob{}, false, fmt.Errorf("find claimable job: %w", err) }
+	leaseUntil := now.Add(lease)
+	updated, err := q.ClaimJob(ctx, claimParams(leaseUntil, row.ID)); if err != nil { return ClaimedJob{}, false, fmt.Errorf("claim job: %w", err) }
+	if updated == 0 { return ClaimedJob{}, false, nil }
+	if err = tx.Commit(); err != nil { return ClaimedJob{}, false, fmt.Errorf("commit claim: %w", err) }
+	id, err := idFrom(row.ID); if err != nil { return ClaimedJob{}, false, err }
+	return ClaimedJob{ID: id, Job: Job{Name: Name(row.Name), Version: uint16(row.Version), Payload: row.Payload, MaxAttempts: uint16(row.MaxAttempts)}, Attempts: uint16(row.Attempts) + 1, LeaseUntil: leaseUntil}, true, nil
+}
+
+func (s *SQLStore) Complete(ctx context.Context, id ID) error {
+	value, err := dbID(id); if err != nil { return err }
+	updated, err := dbgen.New(s.db).CompleteJob(ctx, value); if err != nil { return fmt.Errorf("complete job: %w", err) }
+	if updated == 0 { return fmt.Errorf("job %q is not running", id) }
+	return nil
+}
+
+func (s *SQLStore) Fail(ctx context.Context, id ID, now time.Time, _ error) error {
+	value, err := dbID(id); if err != nil { return err }
+	q := dbgen.New(s.db)
+	retried, err := q.RetryJob(ctx, retryParams(now, value)); if err != nil { return fmt.Errorf("retry job: %w", err) }
+	if retried != 0 { return nil }
+	dead, err := q.DeadLetterJob(ctx, value); if err != nil { return fmt.Errorf("dead-letter job: %w", err) }
+	if dead == 0 { return fmt.Errorf("job %q is not running or cannot be settled", id) }
+	return nil
+}
+
+{{if eq .Database "postgres"}}
+func newID() uuid.UUID { return uuid.New() }
+func dbID(id ID) (uuid.UUID, error) { value, err := uuid.Parse(string(id)); if err != nil { return uuid.UUID{}, fmt.Errorf("parse job id: %w", err) }; return value, nil }
+func idFrom(id uuid.UUID) (ID, error) { return ID(id.String()), nil }
+func enqueueParams(id uuid.UUID, job Job, at time.Time) dbgen.EnqueueJobParams { return dbgen.EnqueueJobParams{ID: id, Name: string(job.Name), Version: int16(job.Version), Payload: job.Payload, RunAt: at, MaxAttempts: int16(job.MaxAttempts), IdempotencyKey: sql.NullString{String: job.IdempotencyKey, Valid: job.IdempotencyKey != ""}} }
+func claimParams(lease time.Time, id uuid.UUID) dbgen.ClaimJobParams { return dbgen.ClaimJobParams{LeaseUntil: sql.NullTime{Time: lease, Valid: true}, ID: id} }
+func retryParams(now time.Time, id uuid.UUID) dbgen.RetryJobParams { return dbgen.RetryJobParams{RunAt: now, ID: id} }
+{{else}}
+func newID() []byte { value := uuid.New(); return value[:] }
+func dbID(id ID) ([]byte, error) { value, err := uuid.Parse(string(id)); if err != nil { return nil, fmt.Errorf("parse job id: %w", err) }; return value[:], nil }
+func idFrom(id []byte) (ID, error) { value, err := uuid.FromBytes(id); if err != nil { return "", fmt.Errorf("decode job id: %w", err) }; return ID(value.String()), nil }
+func enqueueParams(id []byte, job Job, at time.Time) dbgen.EnqueueJobParams { return dbgen.EnqueueJobParams{ID: id, Name: string(job.Name), Version: job.Version, Payload: job.Payload, RunAt: at, MaxAttempts: job.MaxAttempts, IdempotencyKey: sql.NullString{String: job.IdempotencyKey, Valid: job.IdempotencyKey != ""}} }
+func claimParams(lease time.Time, id []byte) dbgen.ClaimJobParams { return dbgen.ClaimJobParams{LeaseUntil: sql.NullTime{Time: lease, Valid: true}, ID: id} }
+func retryParams(now time.Time, id []byte) dbgen.RetryJobParams { return dbgen.RetryJobParams{RunAt: now, ID: id} }
+{{end}}

@@ -1,0 +1,54 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	{{if eq .Database "mysql"}}
+	"encoding/hex"
+	"strings"
+	{{end}}
+
+	"{{.Module}}/backend/internal/features/users/domain"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+// SQLStore keeps all selected-dialect ID conversion and credential SQL inside
+// the users repository adapter.
+type SQLStore struct{ db *sql.DB }
+func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
+
+func (s *SQLStore) Create(ctx context.Context, user domain.User) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO users (id, email, display_name, created_at) VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}})`, idValue(user.ID), string(user.Email), user.DisplayName, user.CreatedAt)
+	if err != nil { return fmt.Errorf("insert user: %w", err) }
+	return nil
+}
+func (s *SQLStore) CreateWithCredential(ctx context.Context, user domain.User, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return fmt.Errorf("begin user credential transaction: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	if _, err = tx.ExecContext(ctx, `INSERT INTO users (id, email, display_name, created_at) VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}})`, idValue(user.ID), string(user.Email), user.DisplayName, user.CreatedAt); err != nil { return fmt.Errorf("insert user: %w", err) }
+	if _, err = tx.ExecContext(ctx, `INSERT INTO user_credentials (user_id, password_hash, created_at, updated_at) VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}})`, idValue(user.ID), passwordHash, user.CreatedAt, user.CreatedAt); err != nil { return fmt.Errorf("insert user credential: %w", err) }
+	if err = tx.Commit(); err != nil { return fmt.Errorf("commit user credential transaction: %w", err) }; return nil
+}
+func (s *SQLStore) FindByID(ctx context.Context, organizationID string, userID domain.ID) (domain.User, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT u.id, u.email, u.display_name, u.created_at FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}} AND u.id = {{if eq .Database "postgres"}}$2{{else}}?{{end}}`, idValue(organizationID), idValue(userID))
+	user, err := scanUser(row); if err != nil { return domain.User{}, fmt.Errorf("find user: %w", err) }; return user, nil
+}
+func (s *SQLStore) FindCredentialByEmail(ctx context.Context, email domain.Email) (domain.Credential, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT u.id, u.email, u.display_name, u.created_at, c.password_hash FROM users u JOIN user_credentials c ON c.user_id = u.id WHERE u.email = {{if eq .Database "postgres"}}$1{{else}}?{{end}}`, string(email))
+	var credential domain.Credential; var id any
+	if err := row.Scan(&id, &credential.User.Email, &credential.User.DisplayName, &credential.User.CreatedAt, &credential.PasswordHash); err != nil { return domain.Credential{}, fmt.Errorf("find user credential: %w", err) }
+	value, err := stringID(id); if err != nil { return domain.Credential{}, err }; credential.User.ID = domain.ID(value); return credential, nil
+}
+func (s *SQLStore) List(ctx context.Context, query domain.ListQuery) (pagination.Page[domain.User], error) { return pagination.Page[domain.User]{}, fmt.Errorf("list users is not implemented") }
+
+type scanner interface{ Scan(...any) error }
+func scanUser(row scanner) (domain.User, error) { var user domain.User; var id any; if err := row.Scan(&id, &user.Email, &user.DisplayName, &user.CreatedAt); err != nil { return domain.User{}, err }; value, err := stringID(id); if err != nil { return domain.User{}, err }; user.ID = domain.ID(value); return user, nil }
+{{if eq .Database "mysql"}}
+func idValue(value any) []byte { id, _ := decodeID(fmt.Sprint(value)); return id }
+func stringID(value any) (string, error) { bytes, ok := value.([]byte); if !ok || len(bytes) != 16 { return "", fmt.Errorf("unexpected UUID type %T", value) }; encoded := hex.EncodeToString(bytes); return encoded[0:8]+"-"+encoded[8:12]+"-"+encoded[12:16]+"-"+encoded[16:20]+"-"+encoded[20:32], nil }
+func decodeID(value string) ([]byte, error) { compact := strings.ReplaceAll(value, "-", ""); if len(compact) != 32 { return nil, fmt.Errorf("invalid UUID %q", value) }; return hex.DecodeString(compact) }
+{{else}}
+func idValue(value any) string { return fmt.Sprint(value) }
+func stringID(value any) (string, error) { text, ok := value.(string); if !ok { return "", fmt.Errorf("unexpected UUID type %T", value) }; return text, nil }
+{{end}}
+var _ Store = (*SQLStore)(nil)

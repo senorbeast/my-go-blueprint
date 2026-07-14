@@ -1,0 +1,35 @@
+package authorization
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	organization "{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	platformauthorization "{{.Module}}/backend/internal/platform/authorization"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
+)
+
+type permissionRepository struct { permissions []platformauthorization.Permission }
+func (*permissionRepository) Create(context.Context, organization.Organization, organization.Membership, organization.Role, organization.Permission) error { return nil }
+func (*permissionRepository) FindMembership(context.Context, organization.ID, platformauth.UserID) (organization.Membership, error) { return organization.Membership{}, nil }
+func (*permissionRepository) DefaultOrganization(context.Context, platformauth.UserID) (organization.Organization, error) { return organization.Organization{}, nil }
+func (r *permissionRepository) Permissions(context.Context, organization.ID, platformauth.UserID) ([]platformauthorization.Permission, error) { return r.permissions, nil }
+func (*permissionRepository) AssignRole(context.Context, organization.ID, platformauth.UserID, organization.RoleID) error { return nil }
+
+func TestAuthorizerAllowsOwnerAndDeniesTenantEscape(t *testing.T) {
+	authorizer := New(&permissionRepository{permissions: []platformauthorization.Permission{"platform.admin"}})
+	principal := platformauth.Principal{UserID: "owner", OrganizationID: "tenant-a"}
+	if err := authorizer.Authorize(context.Background(), principal, "cms.create", platformauthorization.Resource{Kind: "post", OrganizationID: "tenant-a"}); err != nil { t.Fatalf("owner CMS access = %v", err) }
+	err := authorizer.Authorize(context.Background(), principal, "cms.create", platformauthorization.Resource{Kind: "post", OrganizationID: "tenant-b"})
+	var applicationError *platformerrors.Error
+	if !errors.As(err, &applicationError) || applicationError.Kind != platformerrors.Forbidden { t.Fatalf("cross-tenant access error = %v", err) }
+}
+
+func TestAuthorizerDeniesMemberWithoutPermission(t *testing.T) {
+	authorizer := New(&permissionRepository{})
+	err := authorizer.Authorize(context.Background(), platformauth.Principal{UserID: "member", OrganizationID: "tenant-a"}, "cms.create", platformauthorization.Resource{Kind: "post", OrganizationID: "tenant-a"})
+	var applicationError *platformerrors.Error
+	if !errors.As(err, &applicationError) || applicationError.Kind != platformerrors.Forbidden { t.Fatalf("unprivileged member error = %v", err) }
+}

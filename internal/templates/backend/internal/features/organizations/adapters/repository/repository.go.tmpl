@@ -9,20 +9,22 @@ import (
 )
 
 type Store interface {
-	CreateOrganizationWithOwner(context.Context, domain.Organization, domain.Membership) error
+	CreateOrganizationWithOwner(context.Context, domain.Organization, domain.Membership, domain.Role, domain.Permission) error
 	FindMembership(context.Context, domain.ID, platformauth.UserID) (domain.Membership, error)
+	DefaultOrganization(context.Context, platformauth.UserID) (domain.Organization, error)
 	ListPermissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error)
 	AssignRole(context.Context, domain.ID, platformauth.UserID, domain.RoleID) error
 }
 type Repository struct{ store Store }
 
 func New(store Store) *Repository { return &Repository{store: store} }
-func (r *Repository) Create(ctx context.Context, o domain.Organization, m domain.Membership) error {
-	return r.store.CreateOrganizationWithOwner(ctx, o, m)
+func (r *Repository) Create(ctx context.Context, o domain.Organization, m domain.Membership, role domain.Role, permission domain.Permission) error {
+	return r.store.CreateOrganizationWithOwner(ctx, o, m, role, permission)
 }
 func (r *Repository) FindMembership(ctx context.Context, o domain.ID, u platformauth.UserID) (domain.Membership, error) {
 	return r.store.FindMembership(ctx, o, u)
 }
+func (r *Repository) DefaultOrganization(ctx context.Context, u platformauth.UserID) (domain.Organization, error) { return r.store.DefaultOrganization(ctx, u) }
 func (r *Repository) Permissions(ctx context.Context, o domain.ID, u platformauth.UserID) ([]authorization.Permission, error) {
 	return r.store.ListPermissions(ctx, o, u)
 }

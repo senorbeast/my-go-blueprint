@@ -2,20 +2,118 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 	"{{.Module}}/backend/internal/features/crm/domain"
 	"{{.Module}}/backend/internal/platform/auth"
 	"{{.Module}}/backend/internal/platform/authorization"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
 	"{{.Module}}/backend/internal/platform/pagination"
 )
 
-type Service struct { repo domain.Repository; authz authorization.Authorizer }
-func New(repo domain.Repository, authz authorization.Authorizer) *Service { return &Service{repo: repo, authz: authz} }
+type IDGenerator interface { New() string }
+type Clock interface { Now() time.Time }
+type Service struct { repo domain.Repository; authz authorization.Authorizer; ids IDGenerator; clock Clock }
+func New(repo domain.Repository, authz authorization.Authorizer, ids IDGenerator, clock Clock) *Service { return &Service{repo: repo, authz: authz, ids: ids, clock: clock} }
 
-func (s *Service) List(ctx context.Context, principal auth.Principal, kind domain.EntityKind, page pagination.Request) (any, error) {
+type CreateCompany struct { Name string }
+func (s *Service) CreateCompany(ctx context.Context, principal auth.Principal, organizationID string, cmd CreateCompany) (domain.Company, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.companies.create"), authorization.Resource{Kind: string(domain.Companies), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Company{}, err }
+	name, err := domain.ValidateName(cmd.Name); if err != nil { return domain.Company{}, err }
+	company := domain.Company{ID: domain.ID(s.ids.New()), OrganizationID: domain.OrganizationID(organizationID), Name: name, CreatedAt: s.clock.Now()}
+	if err := s.repo.CreateCompany(ctx, company); err != nil { return domain.Company{}, err }
+	return company, nil
+}
+
+type UpdateCompany struct { Name string }
+func (s *Service) UpdateCompany(ctx context.Context, principal auth.Principal, organizationID, companyID string, cmd UpdateCompany) (domain.Company, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.companies.update"), authorization.Resource{Kind: string(domain.Companies), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Company{}, err }
+	id, err := domain.NewID(companyID); if err != nil { return domain.Company{}, err }
+	name, err := domain.ValidateName(cmd.Name); if err != nil { return domain.Company{}, err }
+	company, err := s.repo.FindCompany(ctx, domain.OrganizationID(organizationID), id)
+	if errors.Is(err, domain.ErrNotFound) { return domain.Company{}, platformerrors.New(platformerrors.NotFound, "crm_company_not_found", "CRM company was not found") }
+	if err != nil { return domain.Company{}, err }
+	company.Name = name
+	if err := s.repo.UpdateCompany(ctx, company); err != nil { return domain.Company{}, err }
+	return company, nil
+}
+
+type CreateContact struct { Name, Email string }
+func (s *Service) CreateContact(ctx context.Context, principal auth.Principal, organizationID string, cmd CreateContact) (domain.Contact, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.contacts.create"), authorization.Resource{Kind: string(domain.Contacts), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Contact{}, err }
+	name, err := domain.ValidateName(cmd.Name); if err != nil { return domain.Contact{}, err }
+	email, err := domain.ValidateEmail(cmd.Email); if err != nil { return domain.Contact{}, err }
+	contact := domain.Contact{ID: domain.ID(s.ids.New()), OrganizationID: domain.OrganizationID(organizationID), Name: name, Email: email, CreatedAt: s.clock.Now()}
+	if err := s.repo.CreateContact(ctx, contact); err != nil { return domain.Contact{}, err }
+	return contact, nil
+}
+
+type CreatePipeline struct { Name string }
+func (s *Service) CreatePipeline(ctx context.Context, principal auth.Principal, organizationID string, cmd CreatePipeline) (domain.Pipeline, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.pipelines.create"), authorization.Resource{Kind: string(domain.Pipelines), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Pipeline{}, err }
+	name, err := domain.ValidateName(cmd.Name); if err != nil { return domain.Pipeline{}, err }
+	pipeline := domain.Pipeline{ID: domain.ID(s.ids.New()), OrganizationID: domain.OrganizationID(organizationID), Name: name, CreatedAt: s.clock.Now()}
+	if err := s.repo.CreatePipeline(ctx, pipeline); err != nil { return domain.Pipeline{}, err }
+	return pipeline, nil
+}
+
+type CreateStage struct { PipelineID, Name string; Position int }
+func (s *Service) CreateStage(ctx context.Context, principal auth.Principal, organizationID string, cmd CreateStage) (domain.Stage, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.stages.create"), authorization.Resource{Kind: string(domain.Stages), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Stage{}, err }
+	pipelineID, err := domain.NewID(cmd.PipelineID); if err != nil { return domain.Stage{}, err }
+	name, err := domain.ValidateName(cmd.Name); if err != nil { return domain.Stage{}, err }
+	if cmd.Position < 0 { return domain.Stage{}, fmt.Errorf("stage position must be non-negative") }
+	if _, err := s.repo.FindPipeline(ctx, domain.OrganizationID(organizationID), pipelineID); err != nil { return domain.Stage{}, err }
+	stage := domain.Stage{ID: domain.ID(s.ids.New()), OrganizationID: domain.OrganizationID(organizationID), PipelineID: pipelineID, Name: name, Position: cmd.Position, CreatedAt: s.clock.Now()}
+	if err := s.repo.CreateStage(ctx, stage); err != nil { return domain.Stage{}, err }
+	return stage, nil
+}
+
+type CreateDeal struct { CompanyID, PipelineID, StageID, Name string; ValueCents int64 }
+func (s *Service) CreateDeal(ctx context.Context, principal auth.Principal, organizationID string, cmd CreateDeal) (domain.Deal, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.deals.create"), authorization.Resource{Kind: string(domain.Deals), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Deal{}, err }
+	companyID, err := domain.NewID(cmd.CompanyID); if err != nil { return domain.Deal{}, err }
+	pipelineID, err := domain.NewID(cmd.PipelineID); if err != nil { return domain.Deal{}, err }
+	stageID, err := domain.NewID(cmd.StageID); if err != nil { return domain.Deal{}, err }
+	name, err := domain.ValidateName(cmd.Name); if err != nil { return domain.Deal{}, err }
+	if cmd.ValueCents < 0 { return domain.Deal{}, fmt.Errorf("deal value must be non-negative") }
+	organization := domain.OrganizationID(organizationID)
+	if _, err := s.repo.FindCompany(ctx, organization, companyID); err != nil { return domain.Deal{}, err }
+	if _, err := s.repo.FindPipeline(ctx, organization, pipelineID); err != nil { return domain.Deal{}, err }
+	stage, err := s.repo.FindStage(ctx, organization, stageID); if err != nil { return domain.Deal{}, err }
+	if stage.PipelineID != pipelineID { return domain.Deal{}, fmt.Errorf("stage does not belong to pipeline") }
+	deal := domain.Deal{ID: domain.ID(s.ids.New()), OrganizationID: organization, CompanyID: companyID, PipelineID: pipelineID, StageID: stageID, Name: name, ValueCents: cmd.ValueCents, CreatedAt: s.clock.Now()}
+	if err := s.repo.CreateDeal(ctx, deal); err != nil { return domain.Deal{}, err }
+	return deal, nil
+}
+
+type CreateActivity struct { DealID, Kind, Note string; OccurredAt time.Time }
+func (s *Service) CreateActivity(ctx context.Context, principal auth.Principal, organizationID string, cmd CreateActivity) (domain.Activity, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.activities.create"), authorization.Resource{Kind: string(domain.Activities), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Activity{}, err }
+	dealID, err := domain.NewID(cmd.DealID); if err != nil { return domain.Activity{}, err }
+	kind, err := domain.ValidateName(cmd.Kind); if err != nil { return domain.Activity{}, err }
+	if cmd.OccurredAt.IsZero() { return domain.Activity{}, fmt.Errorf("activity occurrence time is required") }
+	organization := domain.OrganizationID(organizationID)
+	if _, err := s.repo.FindDeal(ctx, organization, dealID); err != nil { return domain.Activity{}, err }
+	activity := domain.Activity{ID: domain.ID(s.ids.New()), OrganizationID: organization, DealID: dealID, Kind: kind, Note: domain.NormalizeNote(cmd.Note), OccurredAt: cmd.OccurredAt, CreatedAt: s.clock.Now()}
+	if err := s.repo.CreateActivity(ctx, activity); err != nil { return domain.Activity{}, err }
+	return activity, nil
+}
+
+func (s *Service) FindCompany(ctx context.Context, principal auth.Principal, organizationID, companyID string) (domain.Company, error) {
+	if err := s.authz.Authorize(ctx, principal, authorization.Permission("crm.companies.view"), authorization.Resource{Kind: string(domain.Companies), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return domain.Company{}, err }
+	id, err := domain.NewID(companyID); if err != nil { return domain.Company{}, err }
+	company, err := s.repo.FindCompany(ctx, domain.OrganizationID(organizationID), id)
+	if errors.Is(err, domain.ErrNotFound) { return domain.Company{}, platformerrors.New(platformerrors.NotFound, "crm_company_not_found", "CRM company was not found") }
+	if err != nil { return domain.Company{}, err }
+	return company, nil
+}
+
+func (s *Service) List(ctx context.Context, principal auth.Principal, organizationID string, kind domain.EntityKind, page pagination.Request) (any, error) {
 	permission := authorization.Permission("crm." + string(kind) + ".view")
-	if err := s.authz.Authorize(ctx, principal, permission, authorization.Resource{Kind: string(kind), OrganizationID: principal.OrganizationID}); err != nil { return nil, err }
-	query := domain.ListQuery{OrganizationID: domain.OrganizationID(principal.OrganizationID), Page: page}
+	if err := s.authz.Authorize(ctx, principal, permission, authorization.Resource{Kind: string(kind), OrganizationID: auth.OrganizationID(organizationID)}); err != nil { return nil, err }
+	query := domain.ListQuery{OrganizationID: domain.OrganizationID(organizationID), Page: page}
 	switch kind {
 	case domain.Companies: return s.repo.ListCompanies(ctx, query)
 	case domain.Contacts: return s.repo.ListContacts(ctx, query)
@@ -26,4 +124,3 @@ func (s *Service) List(ctx context.Context, principal auth.Principal, kind domai
 	default: return nil, fmt.Errorf("unsupported CRM entity %q", kind)
 	}
 }
-

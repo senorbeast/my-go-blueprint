@@ -11,9 +11,31 @@ import(
 )
 type IDGenerator interface{New()string}
 type Clock interface{Now()time.Time}
+// PasswordHasher is a platform seam. Implementations should use a deliberately
+// slow, salted password hash (for example bcrypt or Argon2id).
+type PasswordHasher interface{Hash(context.Context,string)(string,error);Compare(context.Context,string,string)error}
 type Service struct{repo domain.Repository;authz authorization.Authorizer;ids IDGenerator;clock Clock}
 func New(repo domain.Repository,authz authorization.Authorizer,ids IDGenerator,clock Clock)*Service{return &Service{repo,authz,ids,clock}}
 type CreateUser struct{Email,DisplayName string}
+type Signup struct{Email,DisplayName,Password string}
 func(s *Service)Create(ctx context.Context,p auth.Principal,cmd CreateUser)(domain.User,error){if err:=s.authz.Authorize(ctx,p,"users.create",authorization.Resource{Kind:"users",OrganizationID:p.OrganizationID});err!=nil{return domain.User{},err};email,err:=domain.NewEmail(cmd.Email);if err!=nil{return domain.User{},err};u:=domain.User{ID:domain.ID(s.ids.New()),Email:email,DisplayName:strings.TrimSpace(cmd.DisplayName),CreatedAt:s.clock.Now()};return u,s.repo.Create(ctx,u)}
 func(s *Service)List(ctx context.Context,p auth.Principal,page pagination.Request)(pagination.Page[domain.User],error){if err:=s.authz.Authorize(ctx,p,"users.view",authorization.Resource{Kind:"users",OrganizationID:p.OrganizationID});err!=nil{return pagination.Page[domain.User]{},err};return s.repo.List(ctx,domain.ListQuery{OrganizationID:string(p.OrganizationID),Page:page})}
 
+// Signup persists a password hash atomically with its user. The caller owns
+// any organization bootstrap and session issuance that follows registration.
+func(s *Service)Signup(ctx context.Context,cmd Signup,passwords PasswordHasher)(domain.User,error){
+	if strings.TrimSpace(cmd.Password)==""{return domain.User{},domain.ErrInvalidCredentials}
+	email,err:=domain.NewEmail(cmd.Email);if err!=nil{return domain.User{},err}
+	hash,err:=passwords.Hash(ctx,cmd.Password);if err!=nil{return domain.User{},err}
+	u:=domain.User{ID:domain.ID(s.ids.New()),Email:email,DisplayName:strings.TrimSpace(cmd.DisplayName),CreatedAt:s.clock.Now()}
+	if err:=s.repo.CreateWithCredential(ctx,u,hash);err!=nil{return domain.User{},err};return u,nil
+}
+
+// Authenticate intentionally returns one public error for unknown users and
+// mismatched passwords, preventing account-enumeration through the login API.
+func(s *Service)Authenticate(ctx context.Context,emailValue,password string,passwords PasswordHasher)(domain.User,error){
+	email,err:=domain.NewEmail(emailValue);if err!=nil{return domain.User{},domain.ErrInvalidCredentials}
+	credential,err:=s.repo.FindCredentialByEmail(ctx,email);if err!=nil{return domain.User{},domain.ErrInvalidCredentials}
+	if err:=passwords.Compare(ctx,credential.PasswordHash,password);err!=nil{return domain.User{},domain.ErrInvalidCredentials}
+	return credential.User,nil
+}

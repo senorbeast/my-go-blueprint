@@ -1,0 +1,25 @@
+package password
+
+import (
+	"context"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+// Bcrypt keeps password work-factor policy at the platform edge. Context is
+// accepted to satisfy the application port; bcrypt itself is not cancellable.
+type Bcrypt struct{ cost int }
+
+func NewBcrypt(cost int) Bcrypt {
+	if cost == 0 { cost = bcrypt.DefaultCost }
+	return Bcrypt{cost: cost}
+}
+
+func (b Bcrypt) Hash(_ context.Context, password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), b.cost)
+	return string(hash), err
+}
+
+func (Bcrypt) Compare(_ context.Context, hash, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}

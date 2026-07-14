@@ -1,0 +1,39 @@
+-- Auth persistence is deliberately split into statement-sized sqlc queries.
+-- The repository adapter owns the transactions that compose these operations.
+
+-- name: CreateSession :exec
+INSERT INTO sessions (id, user_id, organization_id, created_at, expires_at, revoked_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6{{else}}?, ?, ?, ?, ?, ?{{end}});
+
+-- name: CreateRefreshTokenFamily :exec
+INSERT INTO refresh_token_families (id, session_id, created_at, revoked_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4{{else}}?, ?, ?, ?{{end}});
+
+-- name: CreateRefreshToken :exec
+INSERT INTO refresh_tokens (id, family_id, token_hash, created_at, expires_at, used_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, $5, $6{{else}}?, ?, ?, ?, ?, ?{{end}});
+
+-- name: GetRefreshTokenForRotation :one
+SELECT s.id, s.user_id, s.organization_id, s.created_at, s.expires_at, s.revoked_at,
+       f.id, f.session_id, f.created_at, f.revoked_at, t.used_at, t.expires_at
+FROM refresh_tokens t
+JOIN refresh_token_families f ON f.id = t.family_id
+JOIN sessions s ON s.id = f.session_id
+WHERE t.token_hash = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+FOR UPDATE;
+
+-- name: MarkRefreshTokenUsed :execrows
+UPDATE refresh_tokens SET used_at = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+WHERE token_hash = {{if eq .Database "postgres"}}$2{{else}}?{{end}} AND used_at IS NULL;
+
+-- name: RevokeRefreshTokenFamily :execrows
+UPDATE refresh_token_families SET revoked_at = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+WHERE id = {{if eq .Database "postgres"}}$2{{else}}?{{end}} AND revoked_at IS NULL;
+
+-- name: RevokeSession :execrows
+UPDATE sessions SET revoked_at = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+WHERE id = {{if eq .Database "postgres"}}$2{{else}}?{{end}} AND revoked_at IS NULL;
+
+-- name: RevokeSessionsForUser :execrows
+UPDATE sessions SET revoked_at = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+WHERE user_id = {{if eq .Database "postgres"}}$2{{else}}?{{end}} AND revoked_at IS NULL;

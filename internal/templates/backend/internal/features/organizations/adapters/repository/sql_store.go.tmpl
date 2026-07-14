@@ -1,0 +1,100 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	{{if eq .Database "mysql"}}
+	"encoding/hex"
+	"strings"
+	{{else}}
+	"github.com/google/uuid"
+	{{end}}
+
+	"{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/database/dbgen"
+)
+
+// SQLStore owns transaction boundaries and translates domain values to the
+// generated sqlc query contract. No handwritten statements live in this adapter.
+type SQLStore struct{ db *sql.DB }
+
+func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
+
+func (s *SQLStore) CreateOrganizationWithOwner(ctx context.Context, organization domain.Organization, owner domain.Membership, role domain.Role, permission domain.Permission) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil { return fmt.Errorf("begin organization transaction: %w", err) }
+	defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx)
+	organizationID, err := idValue(organization.ID); if err != nil { return err }
+	ownerOrganizationID, err := idValue(owner.OrganizationID); if err != nil { return err }
+	ownerUserID, err := idValue(owner.UserID); if err != nil { return err }
+	if err = q.CreateOrganization(ctx, dbgen.CreateOrganizationParams{ID: organizationID, Name: organization.Name, CreatedAt: organization.CreatedAt}); err != nil { return fmt.Errorf("insert organization: %w", err) }
+	if err = q.CreateMembership(ctx, dbgen.CreateMembershipParams{OrganizationID: ownerOrganizationID, UserID: ownerUserID}); err != nil { return fmt.Errorf("insert organization owner membership: %w", err) }
+	{{if .RBAC}}
+	roleID, err := idValue(role.ID); if err != nil { return err }
+	roleOrganizationID, err := idValue(role.OrganizationID); if err != nil { return err }
+	permissionID, err := idValue(permission.ID); if err != nil { return err }
+	if err = q.CreateRole(ctx, dbgen.CreateRoleParams{ID: roleID, OrganizationID: roleOrganizationID, Name: role.Name}); err != nil { return fmt.Errorf("insert owner role: %w", err) }
+	if err = q.CreatePermissionIfAbsent(ctx, dbgen.CreatePermissionIfAbsentParams{ID: permissionID, Name: string(permission.Name)}); err != nil { return fmt.Errorf("insert owner permission: %w", err) }
+	if err = q.GrantRolePermissionByName(ctx, dbgen.GrantRolePermissionByNameParams{RoleID: roleID, Name: string(permission.Name)}); err != nil { return fmt.Errorf("grant owner permission: %w", err) }
+	{{if eq .Database "mysql"}}assigned, err := q.AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: ownerOrganizationID, UserID: ownerUserID, ID: roleID, OrganizationID_2: ownerOrganizationID}){{else}}assigned, err := q.AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: ownerOrganizationID, UserID: ownerUserID, ID: roleID}){{end}}
+	if err != nil { return fmt.Errorf("assign owner role: %w", err) }
+	if assigned == 0 { return sql.ErrNoRows }
+	{{end}}
+	if err = tx.Commit(); err != nil { return fmt.Errorf("commit organization transaction: %w", err) }
+	return nil
+}
+
+func (s *SQLStore) FindMembership(ctx context.Context, organizationID domain.ID, userID platformauth.UserID) (domain.Membership, error) {
+	organizationValue, err := idValue(organizationID); if err != nil { return domain.Membership{}, err }
+	userValue, err := idValue(userID); if err != nil { return domain.Membership{}, err }
+	if _, err = dbgen.New(s.db).FindMembership(ctx, dbgen.FindMembershipParams{OrganizationID: organizationValue, UserID: userValue}); err != nil { return domain.Membership{}, fmt.Errorf("find membership: %w", err) }
+	return domain.Membership{OrganizationID: organizationID, UserID: userID, Active: true}, nil
+}
+
+func (s *SQLStore) DefaultOrganization(ctx context.Context, userID platformauth.UserID) (domain.Organization, error) {
+	userValue, err := idValue(userID); if err != nil { return domain.Organization{}, err }
+	row, err := dbgen.New(s.db).GetDefaultOrganizationForUser(ctx, userValue)
+	if err != nil { return domain.Organization{}, fmt.Errorf("find default organization: %w", err) }
+	id, err := stringID(row.ID); if err != nil { return domain.Organization{}, err }
+	return domain.Organization{ID: domain.ID(id), Name: row.Name, CreatedAt: row.CreatedAt}, nil
+}
+
+{{if .RBAC}}
+func (s *SQLStore) ListPermissions(ctx context.Context, organizationID domain.ID, userID platformauth.UserID) ([]authorization.Permission, error) {
+	organizationValue, err := idValue(organizationID); if err != nil { return nil, err }
+	userValue, err := idValue(userID); if err != nil { return nil, err }
+	values, err := dbgen.New(s.db).ListMembershipPermissions(ctx, dbgen.ListMembershipPermissionsParams{OrganizationID: organizationValue, UserID: userValue})
+	if err != nil { return nil, fmt.Errorf("list membership permissions: %w", err) }
+	permissions := make([]authorization.Permission, len(values))
+	for index, value := range values { permissions[index] = authorization.Permission(value) }
+	return permissions, nil
+}
+
+func (s *SQLStore) AssignRole(ctx context.Context, organizationID domain.ID, userID platformauth.UserID, roleID domain.RoleID) error {
+	organizationValue, err := idValue(organizationID); if err != nil { return err }
+	userValue, err := idValue(userID); if err != nil { return err }
+	roleValue, err := idValue(roleID); if err != nil { return err }
+	{{if eq .Database "mysql"}}assigned, err := dbgen.New(s.db).AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: organizationValue, UserID: userValue, ID: roleValue, OrganizationID_2: organizationValue}){{else}}assigned, err := dbgen.New(s.db).AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: organizationValue, UserID: userValue, ID: roleValue}){{end}}
+	if err != nil { return fmt.Errorf("assign membership role: %w", err) }
+	if assigned == 0 { return sql.ErrNoRows }
+	return nil
+}
+{{else}}
+func (*SQLStore) ListPermissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error) { return nil, nil }
+func (*SQLStore) AssignRole(context.Context, domain.ID, platformauth.UserID, domain.RoleID) error { return fmt.Errorf("role assignments require the rbac feature") }
+{{end}}
+
+{{if eq .Database "mysql"}}
+func idValue(value any) ([]byte, error) { return decodeID(fmt.Sprint(value)) }
+func stringID(value []byte) (string, error) { if len(value) != 16 { return "", fmt.Errorf("unexpected UUID length %d", len(value)) }; encoded := hex.EncodeToString(value); return encoded[0:8]+"-"+encoded[8:12]+"-"+encoded[12:16]+"-"+encoded[16:20]+"-"+encoded[20:32], nil }
+func decodeID(value string) ([]byte, error) { compact := strings.ReplaceAll(value, "-", ""); if len(compact) != 32 { return nil, fmt.Errorf("invalid UUID %q", value) }; id, err := hex.DecodeString(compact); if err != nil { return nil, fmt.Errorf("decode UUID: %w", err) }; return id, nil }
+{{else}}
+func idValue(value any) (uuid.UUID, error) { id, err := uuid.Parse(fmt.Sprint(value)); if err != nil { return uuid.UUID{}, fmt.Errorf("parse UUID %q: %w", value, err) }; return id, nil }
+func stringID(value uuid.UUID) (string, error) { return value.String(), nil }
+{{end}}
+
+var _ Store = (*SQLStore)(nil)

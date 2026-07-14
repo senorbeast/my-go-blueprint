@@ -1,0 +1,45 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"{{.Module}}/backend/internal/features/cms/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type recordingRepository struct { post domain.Post; tags []domain.TagID; writes int }
+func (r *recordingRepository) CreatePost(_ context.Context, post domain.Post, tags []domain.TagID) error { r.post, r.tags, r.writes = post, tags, r.writes+1; return nil }
+func (*recordingRepository) FindPost(context.Context, domain.OrganizationID, domain.PostID) (domain.Post, error) { return domain.Post{}, errors.New("unexpected find") }
+func (*recordingRepository) ListPosts(context.Context, domain.PostListQuery) (pagination.Page[domain.Post], error) { return pagination.Page[domain.Post]{}, errors.New("unexpected list") }
+func (*recordingRepository) SavePost(context.Context, domain.Post) error { return errors.New("unexpected save") }
+func (*recordingRepository) CreateCategory(context.Context, domain.Category) error { return errors.New("unexpected category") }
+func (*recordingRepository) ListCategories(context.Context, domain.TaxonomyListQuery) (pagination.Page[domain.Category], error) { return pagination.Page[domain.Category]{}, errors.New("unexpected category list") }
+func (*recordingRepository) CreateTag(context.Context, domain.Tag) error { return errors.New("unexpected tag") }
+func (*recordingRepository) ListTags(context.Context, domain.TaxonomyListQuery) (pagination.Page[domain.Tag], error) { return pagination.Page[domain.Tag]{}, errors.New("unexpected tag list") }
+
+type fixedClock struct { now time.Time }
+func (c fixedClock) Now() time.Time { return c.now }
+type fixedIDs struct{}
+func (fixedIDs) New() string { return "post-id" }
+type recordingAuthorizer struct { err error; calls int }
+func (a *recordingAuthorizer) Authorize(context.Context, platformauth.Principal, authorization.Permission, authorization.Resource) error { a.calls++; return a.err }
+
+func TestCreatePostScopesPersistenceToAuthorizedPrincipal(t *testing.T) {
+	repository := &recordingRepository{}
+	authorizer := &recordingAuthorizer{}
+	service := New(repository, authorizer, fixedIDs{}, fixedClock{now: time.Unix(100, 0)})
+	principal := platformauth.Principal{UserID: "author", OrganizationID: "tenant-a"}
+	post, err := service.CreatePost(context.Background(), principal, CreatePost{Slug: "hello", Title: " Hello ", Body: " Body ", TagIDs: []domain.TagID{"tag-a"}})
+	if err != nil { t.Fatalf("create post: %v", err) }
+	if authorizer.calls != 1 || repository.writes != 1 { t.Fatalf("authorization calls=%d writes=%d", authorizer.calls, repository.writes) }
+	if post.OrganizationID != "tenant-a" || post.AuthorID != "author" || post.Status != domain.PostDraft || post.Title != "Hello" || post.Body != "Body" { t.Fatalf("persisted post = %#v", post) }
+	if len(repository.tags) != 1 || repository.tags[0] != "tag-a" { t.Fatalf("persisted tags = %#v", repository.tags) }
+	authorizer.err = errors.New("forbidden")
+	if _, err = service.CreatePost(context.Background(), principal, CreatePost{Slug: "denied", Title: "Denied", Body: "Denied"}); !errors.Is(err, authorizer.err) { t.Fatalf("denied create error = %v", err) }
+	if repository.writes != 1 { t.Fatalf("denied create reached persistence: %#v", repository) }
+}

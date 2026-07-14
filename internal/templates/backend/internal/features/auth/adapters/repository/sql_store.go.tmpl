@@ -1,0 +1,65 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+	{{if eq .Database "postgres"}}
+	"github.com/google/uuid"
+	{{else}}
+	"encoding/hex"
+	"strings"
+	{{end}}
+
+	"{{.Module}}/backend/internal/features/auth/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/database/dbgen"
+)
+
+// SQLStore translates the auth domain seam to generated sqlc queries. The
+// adapter owns transaction boundaries; generated dbgen records never leave it.
+type SQLStore struct{ db *sql.DB }
+
+func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
+
+func (s *SQLStore) CreateSession(ctx context.Context, session domain.Session, family domain.RefreshFamily, token domain.RefreshToken) error {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return fmt.Errorf("begin session transaction: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx)
+	sessionID, err := idValue(session.ID); if err != nil { return err }; userID, err := idValue(session.UserID); if err != nil { return err }; organizationID, err := idValue(session.OrganizationID); if err != nil { return err }; familyID, err := idValue(family.ID); if err != nil { return err }; familySessionID, err := idValue(family.SessionID); if err != nil { return err }; tokenID, err := idValue(token.ID); if err != nil { return err }; tokenFamilyID, err := idValue(token.FamilyID); if err != nil { return err }
+	if err = q.CreateSession(ctx, dbgen.CreateSessionParams{ID: sessionID, UserID: userID, OrganizationID: organizationID, CreatedAt: session.CreatedAt, ExpiresAt: session.ExpiresAt, RevokedAt: nullTime(session.RevokedAt)}); err != nil { return fmt.Errorf("insert session: %w", err) }
+	if err = q.CreateRefreshTokenFamily(ctx, dbgen.CreateRefreshTokenFamilyParams{ID: familyID, SessionID: familySessionID, CreatedAt: family.CreatedAt, RevokedAt: nullTime(family.RevokedAt)}); err != nil { return fmt.Errorf("insert refresh family: %w", err) }
+	if err = q.CreateRefreshToken(ctx, dbgen.CreateRefreshTokenParams{ID: tokenID, FamilyID: tokenFamilyID, TokenHash: token.Hash[:], CreatedAt: token.CreatedAt, ExpiresAt: token.ExpiresAt, UsedAt: nullTime(token.UsedAt)}); err != nil { return fmt.Errorf("insert refresh token: %w", err) }
+	if err = tx.Commit(); err != nil { return fmt.Errorf("commit session transaction: %w", err) }; return nil
+}
+
+func (s *SQLStore) RotateRefreshToken(ctx context.Context, rotation domain.Rotation) (domain.RotationResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return domain.RotationResult{}, fmt.Errorf("begin refresh rotation: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx); row, err := q.GetRefreshTokenForRotation(ctx, rotation.PresentedHash[:]); if errors.Is(err, sql.ErrNoRows) { return domain.RotationResult{}, domain.ErrInvalidRefreshToken }; if err != nil { return domain.RotationResult{}, fmt.Errorf("find refresh token: %w", err) }
+	sessionID, err := idString(row.ID); if err != nil { return domain.RotationResult{}, err }; userID, err := idString(row.UserID); if err != nil { return domain.RotationResult{}, err }; organizationID, err := idString(row.OrganizationID); if err != nil { return domain.RotationResult{}, err }; familyID, err := idString(row.ID_2); if err != nil { return domain.RotationResult{}, err }; familySessionID, err := idString(row.SessionID); if err != nil { return domain.RotationResult{}, err }
+	session := domain.Session{ID: platformauth.SessionID(sessionID), UserID: platformauth.UserID(userID), OrganizationID: platformauth.OrganizationID(organizationID), CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt}; if row.RevokedAt.Valid { session.RevokedAt = &row.RevokedAt.Time }
+	family := domain.RefreshFamily{ID: domain.FamilyID(familyID), SessionID: platformauth.SessionID(familySessionID), CreatedAt: row.CreatedAt_2}; if row.RevokedAt_2.Valid { family.RevokedAt = &row.RevokedAt_2.Time }; result := domain.RotationResult{Session: session, Family: family}
+	if row.UsedAt.Valid { familyValue, err := idValue(family.ID); if err != nil { return domain.RotationResult{}, err }; if _, err = q.RevokeRefreshTokenFamily(ctx, dbgen.RevokeRefreshTokenFamilyParams{ID: familyValue, RevokedAt: nullTime(&rotation.Now)}); err != nil { return domain.RotationResult{}, fmt.Errorf("revoke replayed refresh family: %w", err) }; if err = tx.Commit(); err != nil { return domain.RotationResult{}, fmt.Errorf("commit replay revocation: %w", err) }; result.Reused = true; return result, nil }
+	if session.RevokedAt != nil || family.RevokedAt != nil || !row.ExpiresAt_2.After(rotation.Now) || !session.ExpiresAt.After(rotation.Now) { return domain.RotationResult{}, domain.ErrInvalidRefreshToken }
+	if _, err = q.MarkRefreshTokenUsed(ctx, dbgen.MarkRefreshTokenUsedParams{UsedAt: nullTime(&rotation.Now), TokenHash: rotation.PresentedHash[:]}); err != nil { return domain.RotationResult{}, fmt.Errorf("consume refresh token: %w", err) }
+	replacementID, err := idValue(rotation.Replacement.ID); if err != nil { return domain.RotationResult{}, err }; familyValue, err := idValue(family.ID); if err != nil { return domain.RotationResult{}, err }
+	if err = q.CreateRefreshToken(ctx, dbgen.CreateRefreshTokenParams{ID: replacementID, FamilyID: familyValue, TokenHash: rotation.Replacement.Hash[:], CreatedAt: rotation.Replacement.CreatedAt, ExpiresAt: rotation.Replacement.ExpiresAt, UsedAt: nullTime(rotation.Replacement.UsedAt)}); err != nil { return domain.RotationResult{}, fmt.Errorf("insert rotated refresh token: %w", err) }
+	if err = tx.Commit(); err != nil { return domain.RotationResult{}, fmt.Errorf("commit refresh rotation: %w", err) }; return result, nil
+}
+
+func (s *SQLStore) RevokeSession(ctx context.Context, id platformauth.SessionID, at time.Time) error { value, err := idValue(id); if err != nil { return err }; _, err = dbgen.New(s.db).RevokeSession(ctx, dbgen.RevokeSessionParams{ID: value, RevokedAt: nullTime(&at)}); return wrap("revoke session", err) }
+func (s *SQLStore) RevokeFamily(ctx context.Context, id domain.FamilyID, at time.Time) error { value, err := idValue(id); if err != nil { return err }; _, err = dbgen.New(s.db).RevokeRefreshTokenFamily(ctx, dbgen.RevokeRefreshTokenFamilyParams{ID: value, RevokedAt: nullTime(&at)}); return wrap("revoke refresh family", err) }
+func (s *SQLStore) RevokeAllForUser(ctx context.Context, id platformauth.UserID, at time.Time) error { value, err := idValue(id); if err != nil { return err }; _, err = dbgen.New(s.db).RevokeSessionsForUser(ctx, dbgen.RevokeSessionsForUserParams{UserID: value, RevokedAt: nullTime(&at)}); return wrap("revoke all sessions", err) }
+func wrap(operation string, err error) error { if err != nil { return fmt.Errorf("%s: %w", operation, err) }; return nil }
+func nullTime(value *time.Time) sql.NullTime { if value == nil { return sql.NullTime{} }; return sql.NullTime{Time: *value, Valid: true} }
+
+{{if eq .Database "postgres"}}
+func idValue(id any) (uuid.UUID, error) { value, err := uuid.Parse(fmt.Sprint(id)); if err != nil { return uuid.UUID{}, fmt.Errorf("parse UUID %q: %w", id, err) }; return value, nil }
+func idString(value uuid.UUID) (string, error) { return value.String(), nil }
+{{else}}
+func idValue(id any) ([]byte, error) { compact := strings.ReplaceAll(fmt.Sprint(id), "-", ""); if len(compact) != 32 { return nil, fmt.Errorf("invalid UUID %q", id) }; value, err := hex.DecodeString(compact); if err != nil { return nil, fmt.Errorf("decode UUID: %w", err) }; return value, nil }
+func idString(value []byte) (string, error) { if len(value) != 16 { return "", fmt.Errorf("invalid binary UUID length %d", len(value)) }; encoded := hex.EncodeToString(value); return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32], nil }
+{{end}}
+
+var _ Store = (*SQLStore)(nil)

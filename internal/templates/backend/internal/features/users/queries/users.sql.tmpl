@@ -1,7 +1,11 @@
 -- sqlc.arg placeholders are rewritten by sqlc for the selected dialect.
 -- name: CreateUser :exec
 INSERT INTO users (id,email,display_name,created_at) VALUES ({{if eq .Database "postgres"}}$1,$2,$3,$4{{else}}?,?,?,?{{end}});
+-- name: CreateUserCredential :exec
+INSERT INTO user_credentials (user_id,password_hash,created_at,updated_at) VALUES ({{if eq .Database "postgres"}}$1,$2,$3,$4{{else}}?,?,?,?{{end}});
 -- name: GetUser :one
 SELECT id,email,display_name,created_at FROM users WHERE id={{if eq .Database "postgres"}}$1{{else}}?{{end}};
+-- name: GetUserCredentialByEmail :one
+SELECT u.id,u.email,u.display_name,u.created_at,c.password_hash FROM users u JOIN user_credentials c ON c.user_id=u.id WHERE u.email={{if eq .Database "postgres"}}$1{{else}}?{{end}};
 -- name: ListUsers :many
 SELECT u.id,u.email,u.display_name,u.created_at FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.organization_id={{if eq .Database "postgres"}}$1{{else}}?{{end}} ORDER BY u.created_at DESC,u.id DESC LIMIT {{if eq .Database "postgres"}}$2{{else}}?{{end}};

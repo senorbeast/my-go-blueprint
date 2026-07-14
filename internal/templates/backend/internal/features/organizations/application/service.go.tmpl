@@ -27,10 +27,15 @@ func (s *Service) Create(ctx context.Context, principal platformauth.Principal, 
 		return domain.Organization{}, err
 	}
 	membership := domain.Membership{OrganizationID: organization.ID, UserID: principal.UserID, Active: true, CreatedAt: s.clock.Now()}
-	if err := s.repository.Create(ctx, organization, membership); err != nil {
+	ownerRole := domain.Role{ID: domain.RoleID(s.ids.New()), OrganizationID: organization.ID, Name: "owner"}
+	ownerPermission := domain.Permission{ID: domain.PermissionID(s.ids.New()), Name: "platform.admin"}
+	if err := s.repository.Create(ctx, organization, membership, ownerRole, ownerPermission); err != nil {
 		return domain.Organization{}, err
 	}
 	return organization, nil
+}
+func (s *Service) DefaultOrganization(ctx context.Context, userID platformauth.UserID) (domain.Organization, error) {
+	return s.repository.DefaultOrganization(ctx, userID)
 }
 func (s *Service) AssignRole(ctx context.Context, principal platformauth.Principal, userID platformauth.UserID, roleID domain.RoleID) error {
 	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil {

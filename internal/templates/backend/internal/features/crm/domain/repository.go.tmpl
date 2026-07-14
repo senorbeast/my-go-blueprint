@@ -10,6 +10,7 @@ type ListQuery struct { OrganizationID OrganizationID; Page pagination.Request }
 // Repository keeps tenant scope explicit on every read and write boundary.
 type Repository interface {
 	CreateCompany(context.Context, Company) error
+	UpdateCompany(context.Context, Company) error
 	CreateContact(context.Context, Contact) error
 	CreatePipeline(context.Context, Pipeline) error
 	CreateStage(context.Context, Stage) error
@@ -28,4 +29,3 @@ type Repository interface {
 	ListDeals(context.Context, ListQuery) (pagination.Page[Deal], error)
 	ListActivities(context.Context, ListQuery) (pagination.Page[Activity], error)
 }
-

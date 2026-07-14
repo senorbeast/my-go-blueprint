@@ -30,7 +30,7 @@ frontend:
 {{end}}
 
 verify-generated:
-	cd backend && go test ./...
+	$(MAKE) -C backend verify
 {{if .Frontend}}
 	cd frontend && pnpm typecheck && pnpm test && pnpm build
 {{end}}

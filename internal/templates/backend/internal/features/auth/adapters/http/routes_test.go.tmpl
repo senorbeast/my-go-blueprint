@@ -1,0 +1,48 @@
+package http
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
+	"{{.Module}}/backend/internal/features/auth/application"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+)
+
+type routeSessions struct{}
+func (routeSessions) Rotate(context.Context, string) (application.Tokens, error) { return application.Tokens{}, nil }
+func (routeSessions) Logout(context.Context, platformauth.Principal) error { return nil }
+type routeCredentials struct{}
+func (routeCredentials) Signup(context.Context, application.Signup) (application.Tokens, error) { return application.Tokens{AccessToken: "access", RefreshToken: "refresh", AccessExpiry: time.Unix(3600, 0), RefreshExpiry: time.Unix(7200, 0)}, nil }
+func (routeCredentials) Login(context.Context, application.Login) (application.Tokens, error) { return application.Tokens{}, nil }
+
+func TestSignupIssuesSessionCookiesWithoutExistingCSRFToken(t *testing.T) {
+	e := echo.New()
+	e.Use(httpplatform.CSRFMiddleware())
+	registrar := httpplatform.NewRegistrar(e)
+	if err := registrar.RegisterModule(New(routeSessions{}, routeCredentials{}, NewCookies(false))); err != nil { t.Fatal(err) }
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", strings.NewReader(`{"email":"owner@example.com","displayName":"Owner","password":"secret-pass","organizationName":"Acme"}`))
+	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	e.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK { t.Fatalf("signup status = %d, body = %s", recorder.Code, recorder.Body.String()) }
+	if !strings.Contains(recorder.Header().Get(echo.HeaderSetCookie), "access_token=access") { t.Fatalf("signup cookies = %q", recorder.Header().Get(echo.HeaderSetCookie)) }
+}
+
+func TestCSRFRejectsCookieAuthenticatedUnsafeRequest(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = httpplatform.ProblemHandler(zap.NewNop())
+	e.Use(httpplatform.CSRFMiddleware())
+	e.POST("/unsafe", func(echo.Context) error { return nil })
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/unsafe", nil)
+	request.AddCookie(&http.Cookie{Name: "access_token", Value: "access"})
+	e.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden { t.Fatalf("CSRF status = %d", recorder.Code) }
+}

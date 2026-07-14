@@ -1,0 +1,36 @@
+-- Queue statements are the portable sqlc contract for durable workers. The
+-- adapter owns transaction boundaries around claim and settlement.
+
+-- name: EnqueueJob :exec
+INSERT INTO jobs (id, name, version, payload, state, run_at, attempts, max_attempts, lease_until, idempotency_key)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3, $4, 'queued', $5, 0, $6, NULL, $7) ON CONFLICT (idempotency_key) DO NOTHING{{else}}?, ?, ?, ?, 'queued', ?, 0, ?, NULL, ?) ON DUPLICATE KEY UPDATE id = id{{end}};
+
+-- name: FindJobByIdempotencyKey :one
+SELECT id FROM jobs WHERE idempotency_key = {{if eq .Database "postgres"}}$1{{else}}?{{end}};
+
+-- name: RecoverExpiredJobLeases :exec
+UPDATE jobs SET state = 'queued', lease_until = NULL
+WHERE state = 'running' AND lease_until IS NOT NULL AND lease_until <= {{if eq .Database "postgres"}}$1{{else}}?{{end}};
+
+-- name: FindAvailableJobForClaim :one
+SELECT id, name, version, payload, attempts, max_attempts
+FROM jobs
+WHERE state = 'queued' AND run_at <= {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+ORDER BY run_at, created_at, id
+LIMIT 1{{if eq .Database "postgres"}} FOR UPDATE SKIP LOCKED{{end}};
+
+-- name: ClaimJob :execrows
+UPDATE jobs SET state = 'running', attempts = attempts + 1, lease_until = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+WHERE id = {{if eq .Database "postgres"}}$2{{else}}?{{end}} AND state = 'queued';
+
+-- name: CompleteJob :execrows
+UPDATE jobs SET state = 'completed', lease_until = NULL
+WHERE id = {{if eq .Database "postgres"}}$1{{else}}?{{end}} AND state = 'running';
+
+-- name: RetryJob :execrows
+UPDATE jobs SET state = 'queued', run_at = {{if eq .Database "postgres"}}$1{{else}}?{{end}}, lease_until = NULL
+WHERE id = {{if eq .Database "postgres"}}$2{{else}}?{{end}} AND state = 'running' AND attempts < max_attempts;
+
+-- name: DeadLetterJob :execrows
+UPDATE jobs SET state = 'dead', lease_until = NULL
+WHERE id = {{if eq .Database "postgres"}}$1{{else}}?{{end}} AND state = 'running' AND attempts >= max_attempts;

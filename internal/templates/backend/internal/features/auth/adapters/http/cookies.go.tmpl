@@ -1,0 +1,46 @@
+package http
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"net/http"
+	"time"
+
+	"{{.Module}}/backend/internal/features/auth/application"
+)
+
+const (
+	accessCookieName = "access_token"
+	refreshCookieName = "refresh_token"
+	csrfCookieName = "csrf_token"
+)
+
+// Cookies makes session credentials host-only and HttpOnly. The CSRF token is
+// intentionally readable so browser clients can echo it in X-CSRF-Token.
+type Cookies struct { secure bool }
+
+func NewCookies(secure bool) Cookies { return Cookies{secure: secure} }
+
+func (c Cookies) SessionCookies(tokens application.Tokens) []string {
+	csrf := makeCSRFToken()
+	return []string{
+		cookieString(&http.Cookie{Name: accessCookieName, Value: tokens.AccessToken, Path: "/", HttpOnly: true, Secure: c.secure, SameSite: http.SameSiteLaxMode, Expires: tokens.AccessExpiry, MaxAge: secondsUntil(tokens.AccessExpiry)}),
+		cookieString(&http.Cookie{Name: refreshCookieName, Value: tokens.RefreshToken, Path: "/api/v1/auth", HttpOnly: true, Secure: c.secure, SameSite: http.SameSiteLaxMode, Expires: tokens.RefreshExpiry, MaxAge: secondsUntil(tokens.RefreshExpiry)}),
+		cookieString(&http.Cookie{Name: csrfCookieName, Value: csrf, Path: "/", Secure: c.secure, SameSite: http.SameSiteLaxMode, Expires: tokens.RefreshExpiry, MaxAge: secondsUntil(tokens.RefreshExpiry)}),
+	}
+}
+
+func (c Cookies) ClearSessionCookies() []string {
+	expired := time.Unix(1, 0)
+	return []string{
+		cookieString(&http.Cookie{Name: accessCookieName, Path: "/", HttpOnly: true, Secure: c.secure, SameSite: http.SameSiteLaxMode, Expires: expired, MaxAge: -1}),
+		cookieString(&http.Cookie{Name: refreshCookieName, Path: "/api/v1/auth", HttpOnly: true, Secure: c.secure, SameSite: http.SameSiteLaxMode, Expires: expired, MaxAge: -1}),
+		cookieString(&http.Cookie{Name: csrfCookieName, Path: "/", Secure: c.secure, SameSite: http.SameSiteLaxMode, Expires: expired, MaxAge: -1}),
+	}
+}
+
+func cookieString(cookie *http.Cookie) string { return cookie.String() }
+func secondsUntil(expiry time.Time) int { seconds := int(time.Until(expiry).Seconds()); if seconds < 1 { return 1 }; return seconds }
+func makeCSRFToken() string { value := make([]byte, 32); if _, err := rand.Read(value); err != nil { panic("generate CSRF token: " + err.Error()) }; return base64.RawURLEncoding.EncodeToString(value) }
+
+var _ SessionCookiePolicy = Cookies{}

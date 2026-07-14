@@ -26,6 +26,9 @@ type Stage struct { ID ID; OrganizationID OrganizationID; PipelineID ID; Name st
 type Deal struct { ID ID; OrganizationID OrganizationID; CompanyID, PipelineID, StageID ID; Name string; ValueCents int64; CreatedAt time.Time }
 type Activity struct { ID ID; OrganizationID OrganizationID; DealID ID; Kind, Note string; OccurredAt, CreatedAt time.Time }
 
+var ErrNotFound = errors.New("CRM resource not found")
+
 func NewID(value string) (ID, error) { value = strings.TrimSpace(value); if value == "" { return "", errors.New("id is required") }; return ID(value), nil }
 func ValidateName(value string) (string, error) { value = strings.TrimSpace(value); if value == "" { return "", errors.New("name is required") }; if len(value) > 200 { return "", errors.New("name is too long") }; return value, nil }
-
+func ValidateEmail(value string) (string, error) { value = strings.TrimSpace(value); if len(value) > 320 { return "", errors.New("email is too long") }; return value, nil }
+func NormalizeNote(value string) string { return strings.TrimSpace(value) }

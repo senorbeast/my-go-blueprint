@@ -1,0 +1,102 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+	{{if eq .Database "postgres"}}
+	"github.com/google/uuid"
+	{{else}}
+	"encoding/hex"
+	{{end}}
+
+	"{{.Module}}/backend/internal/features/cms/domain"
+	"{{.Module}}/backend/internal/platform/database/dbgen"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+// SQLStore owns the dialect boundary. All SQL is generated from the CMS query
+// catalog; every generated read and write is organization scoped.
+type SQLStore struct{ db *sql.DB }
+func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
+
+func (s *SQLStore) CreatePost(ctx context.Context, post domain.Post, tagIDs []domain.TagID) error {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return fmt.Errorf("begin create post transaction: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx)
+	{{if eq .Database "postgres"}}
+	postID, err := uuidValue(post.ID); if err != nil { return err }; organizationID, err := uuidValue(post.OrganizationID); if err != nil { return err }; authorID, err := uuidValue(post.AuthorID); if err != nil { return err }; categoryID := uuid.NullUUID{}; if post.CategoryID != nil { categoryID.UUID, err = uuidValue(*post.CategoryID); if err != nil { return err }; categoryID.Valid = true }
+	err = q.CreateCMSPost(ctx, dbgen.CreateCMSPostParams{ID: postID, OrganizationID: organizationID, AuthorID: authorID, CategoryID: categoryID, Slug: string(post.Slug), Title: post.Title, Body: post.Body, Status: string(post.Status), CreatedAt: post.CreatedAt, UpdatedAt: post.UpdatedAt})
+	{{else}}
+	postID, err := idValue(post.ID); if err != nil { return err }; organizationID, err := idValue(post.OrganizationID); if err != nil { return err }; authorID, err := idValue(post.AuthorID); if err != nil { return err }; categoryID := ""; if post.CategoryID != nil { categoryID = string(*post.CategoryID) }
+	err = q.CreateCMSPost(ctx, dbgen.CreateCMSPostParams{ID: postID, OrganizationID: organizationID, AuthorID: authorID, NULLIF: categoryID, Slug: string(post.Slug), Title: post.Title, Body: post.Body, Status: dbgen.CmsPostsStatus(post.Status), CreatedAt: post.CreatedAt, UpdatedAt: post.UpdatedAt})
+	{{end}}
+	if err != nil { return fmt.Errorf("insert CMS post: %w", err) }
+	for _, tagID := range tagIDs { if err = attachTag(ctx, q, post.OrganizationID, post.ID, tagID, post.CreatedAt); err != nil { return fmt.Errorf("attach CMS tag: %w", err) } }
+	if err = tx.Commit(); err != nil { return fmt.Errorf("commit create post transaction: %w", err) }; return nil
+}
+
+func (s *SQLStore) FindPost(ctx context.Context, organizationID domain.OrganizationID, postID domain.PostID) (domain.Post, error) {
+	row, err := getPost(ctx, dbgen.New(s.db), organizationID, postID); if err != nil { return domain.Post{}, fmt.Errorf("find CMS post: %w", err) }; return postFrom(row)
+}
+
+func (s *SQLStore) ListPosts(ctx context.Context, query domain.PostListQuery) (pagination.Page[domain.Post], error) {
+	if query.Page.Limit == 0 { return pagination.Page[domain.Post]{}, fmt.Errorf("CMS post list limit is required") }
+	rows, err := listPosts(ctx, dbgen.New(s.db), query.OrganizationID); if err != nil { return pagination.Page[domain.Post]{}, fmt.Errorf("list CMS posts: %w", err) }
+	items := make([]domain.Post, 0, query.Page.Limit+1); passedCursor := query.Page.Cursor == ""
+	for _, row := range rows { post, err := postFrom(row); if err != nil { return pagination.Page[domain.Post]{}, err }; if !passedCursor { if string(post.ID) == query.Page.Cursor { passedCursor = true }; continue }; if query.Filter.Status != nil && post.Status != *query.Filter.Status { continue }; if query.Filter.CategoryID != nil && (post.CategoryID == nil || *post.CategoryID != *query.Filter.CategoryID) { continue }; if query.Filter.Search != "" && !contains(post.Title, query.Filter.Search) && !contains(post.Body, query.Filter.Search) { continue }; items = append(items, post); if len(items) > int(query.Page.Limit) { break } }
+	return postPage(items, query.Page.Limit), nil
+}
+
+func (s *SQLStore) SavePost(ctx context.Context, post domain.Post) error {
+	{{if eq .Database "postgres"}}
+	organizationID, err := uuidValue(post.OrganizationID); if err != nil { return err }; postID, err := uuidValue(post.ID); if err != nil { return err }; err = dbgen.New(s.db).UpdateCMSPostStatus(ctx, dbgen.UpdateCMSPostStatusParams{Status: string(post.Status), PublishedAt: nullTime(post.PublishedAt), UpdatedAt: post.UpdatedAt, OrganizationID: organizationID, ID: postID})
+	{{else}}
+	organizationID, err := idValue(post.OrganizationID); if err != nil { return err }; postID, err := idValue(post.ID); if err != nil { return err }; err = dbgen.New(s.db).UpdateCMSPostStatus(ctx, dbgen.UpdateCMSPostStatusParams{Status: dbgen.CmsPostsStatus(post.Status), PublishedAt: nullTime(post.PublishedAt), UpdatedAt: post.UpdatedAt, OrganizationID: organizationID, ID: postID})
+	{{end}}
+	if err != nil { return fmt.Errorf("save CMS post: %w", err) }; return nil
+}
+
+func (s *SQLStore) CreateCategory(ctx context.Context, category domain.Category) error { return createCategory(ctx, dbgen.New(s.db), category) }
+func (s *SQLStore) CreateTag(ctx context.Context, tag domain.Tag) error { return createTag(ctx, dbgen.New(s.db), tag) }
+func (s *SQLStore) ListCategories(ctx context.Context, query domain.TaxonomyListQuery) (pagination.Page[domain.Category], error) { if query.Page.Limit == 0 { return pagination.Page[domain.Category]{}, fmt.Errorf("CMS category list limit is required") }; rows, err := listCategories(ctx, dbgen.New(s.db), query.OrganizationID); if err != nil { return pagination.Page[domain.Category]{}, err }; items := make([]domain.Category, 0, len(rows)); for _, row := range rows { item, err := categoryFrom(row); if err != nil { return pagination.Page[domain.Category]{}, err }; items = append(items, item) }; return categoryPage(afterCategory(items, query.Page.Cursor), query.Page.Limit), nil }
+func (s *SQLStore) ListTags(ctx context.Context, query domain.TaxonomyListQuery) (pagination.Page[domain.Tag], error) { if query.Page.Limit == 0 { return pagination.Page[domain.Tag]{}, fmt.Errorf("CMS tag list limit is required") }; rows, err := listTags(ctx, dbgen.New(s.db), query.OrganizationID); if err != nil { return pagination.Page[domain.Tag]{}, err }; items := make([]domain.Tag, 0, len(rows)); for _, row := range rows { item, err := tagFrom(row); if err != nil { return pagination.Page[domain.Tag]{}, err }; items = append(items, item) }; return tagPage(afterTag(items, query.Page.Cursor), query.Page.Limit), nil }
+
+func contains(value, search string) bool { {{if eq .Database "postgres"}}return strings.Contains(value, search){{else}}return strings.Contains(strings.ToLower(value), strings.ToLower(search)){{end}} }
+func postPage(items []domain.Post, limit pagination.Limit) pagination.Page[domain.Post] { page := pagination.Page[domain.Post]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit]; cursor := string(page.Items[len(page.Items)-1].ID); page.NextCursor = &cursor }; return page }
+func categoryPage(items []domain.Category, limit pagination.Limit) pagination.Page[domain.Category] { page := pagination.Page[domain.Category]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit]; cursor := string(page.Items[len(page.Items)-1].ID); page.NextCursor = &cursor }; return page }
+func tagPage(items []domain.Tag, limit pagination.Limit) pagination.Page[domain.Tag] { page := pagination.Page[domain.Tag]{Items: items}; if len(page.Items) > int(limit) { page.HasMore = true; page.Items = page.Items[:limit]; cursor := string(page.Items[len(page.Items)-1].ID); page.NextCursor = &cursor }; return page }
+func afterCategory(items []domain.Category, cursor string) []domain.Category { if cursor == "" { return items }; for index, item := range items { if string(item.ID) == cursor { return items[index+1:] } }; return nil }
+func afterTag(items []domain.Tag, cursor string) []domain.Tag { if cursor == "" { return items }; for index, item := range items { if string(item.ID) == cursor { return items[index+1:] } }; return nil }
+
+func nullTime(value *time.Time) sql.NullTime { if value == nil { return sql.NullTime{} }; return sql.NullTime{Time: *value, Valid: true} }
+
+{{if eq .Database "postgres"}}
+func uuidValue(value any) (uuid.UUID, error) { id, err := uuid.Parse(fmt.Sprint(value)); if err != nil { return uuid.UUID{}, fmt.Errorf("parse UUID: %w", err) }; return id, nil }
+func attachTag(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID, postID domain.PostID, tagID domain.TagID, createdAt time.Time) error { organization, err := uuidValue(organizationID); if err != nil { return err }; post, err := uuidValue(postID); if err != nil { return err }; tag, err := uuidValue(tagID); if err != nil { return err }; return q.AttachCMSTag(ctx, dbgen.AttachCMSTagParams{OrganizationID: organization, PostID: post, CreatedAt: createdAt, ID: tag}) }
+func getPost(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID, postID domain.PostID) (dbgen.CmsPost, error) { organization, err := uuidValue(organizationID); if err != nil { return dbgen.CmsPost{}, err }; post, err := uuidValue(postID); if err != nil { return dbgen.CmsPost{}, err }; return q.GetCMSPost(ctx, dbgen.GetCMSPostParams{OrganizationID: organization, ID: post}) }
+func listPosts(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID) ([]dbgen.CmsPost, error) { organization, err := uuidValue(organizationID); if err != nil { return nil, err }; return q.ListCMSPostsForOrganization(ctx, organization) }
+func createCategory(ctx context.Context, q *dbgen.Queries, category domain.Category) error { id, err := uuidValue(category.ID); if err != nil { return err }; organization, err := uuidValue(category.OrganizationID); if err != nil { return err }; now := time.Now().UTC(); return q.CreateCMSCategory(ctx, dbgen.CreateCMSCategoryParams{ID: id, OrganizationID: organization, Name: category.Name, Slug: string(category.Slug), CreatedAt: now, UpdatedAt: now}) }
+func createTag(ctx context.Context, q *dbgen.Queries, tag domain.Tag) error { id, err := uuidValue(tag.ID); if err != nil { return err }; organization, err := uuidValue(tag.OrganizationID); if err != nil { return err }; now := time.Now().UTC(); return q.CreateCMSTag(ctx, dbgen.CreateCMSTagParams{ID: id, OrganizationID: organization, Name: tag.Name, Slug: string(tag.Slug), CreatedAt: now, UpdatedAt: now}) }
+func listCategories(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID) ([]dbgen.ListCMSCategoriesForOrganizationRow, error) { organization, err := uuidValue(organizationID); if err != nil { return nil, err }; return q.ListCMSCategoriesForOrganization(ctx, organization) }
+func listTags(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID) ([]dbgen.ListCMSTagsForOrganizationRow, error) { organization, err := uuidValue(organizationID); if err != nil { return nil, err }; return q.ListCMSTagsForOrganization(ctx, organization) }
+func postFrom(row dbgen.CmsPost) (domain.Post, error) { post := domain.Post{ID: domain.PostID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), AuthorID: domain.UserID(row.AuthorID.String()), Slug: domain.Slug(row.Slug), Title: row.Title, Body: row.Body, Status: domain.PostStatus(row.Status), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}; if row.CategoryID.Valid { value := domain.CategoryID(row.CategoryID.UUID.String()); post.CategoryID = &value }; if row.PublishedAt.Valid { post.PublishedAt = &row.PublishedAt.Time }; return post, nil }
+func categoryFrom(row dbgen.ListCMSCategoriesForOrganizationRow) (domain.Category, error) { return domain.Category{ID: domain.CategoryID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), Name: row.Name, Slug: domain.Slug(row.Slug)}, nil }
+func tagFrom(row dbgen.ListCMSTagsForOrganizationRow) (domain.Tag, error) { return domain.Tag{ID: domain.TagID(row.ID.String()), OrganizationID: domain.OrganizationID(row.OrganizationID.String()), Name: row.Name, Slug: domain.Slug(row.Slug)}, nil }
+{{else}}
+func idValue(value any) ([]byte, error) { compact := strings.ReplaceAll(fmt.Sprint(value), "-", ""); if len(compact) != 32 { return nil, fmt.Errorf("invalid UUID %q", value) }; id, err := hex.DecodeString(compact); if err != nil { return nil, fmt.Errorf("decode UUID: %w", err) }; return id, nil }
+func stringID(value []byte) (string, error) { if len(value) != 16 { return "", fmt.Errorf("unexpected UUID byte length %d", len(value)) }; encoded := hex.EncodeToString(value); return encoded[0:8]+"-"+encoded[8:12]+"-"+encoded[12:16]+"-"+encoded[16:20]+"-"+encoded[20:32], nil }
+func attachTag(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID, postID domain.PostID, tagID domain.TagID, createdAt time.Time) error { organization, err := idValue(organizationID); if err != nil { return err }; post, err := idValue(postID); if err != nil { return err }; tag, err := idValue(tagID); if err != nil { return err }; return q.AttachCMSTag(ctx, dbgen.AttachCMSTagParams{OrganizationID: organization, PostID: post, CreatedAt: createdAt, OrganizationID_2: organization, ID: tag}) }
+func getPost(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID, postID domain.PostID) (dbgen.CmsPost, error) { organization, err := idValue(organizationID); if err != nil { return dbgen.CmsPost{}, err }; post, err := idValue(postID); if err != nil { return dbgen.CmsPost{}, err }; return q.GetCMSPost(ctx, dbgen.GetCMSPostParams{OrganizationID: organization, ID: post}) }
+func listPosts(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID) ([]dbgen.CmsPost, error) { organization, err := idValue(organizationID); if err != nil { return nil, err }; return q.ListCMSPostsForOrganization(ctx, organization) }
+func createCategory(ctx context.Context, q *dbgen.Queries, category domain.Category) error { id, err := idValue(category.ID); if err != nil { return err }; organization, err := idValue(category.OrganizationID); if err != nil { return err }; now := time.Now().UTC(); return q.CreateCMSCategory(ctx, dbgen.CreateCMSCategoryParams{ID: id, OrganizationID: organization, Name: category.Name, Slug: string(category.Slug), CreatedAt: now, UpdatedAt: now}) }
+func createTag(ctx context.Context, q *dbgen.Queries, tag domain.Tag) error { id, err := idValue(tag.ID); if err != nil { return err }; organization, err := idValue(tag.OrganizationID); if err != nil { return err }; now := time.Now().UTC(); return q.CreateCMSTag(ctx, dbgen.CreateCMSTagParams{ID: id, OrganizationID: organization, Name: tag.Name, Slug: string(tag.Slug), CreatedAt: now, UpdatedAt: now}) }
+func listCategories(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID) ([]dbgen.ListCMSCategoriesForOrganizationRow, error) { organization, err := idValue(organizationID); if err != nil { return nil, err }; return q.ListCMSCategoriesForOrganization(ctx, organization) }
+func listTags(ctx context.Context, q *dbgen.Queries, organizationID domain.OrganizationID) ([]dbgen.ListCMSTagsForOrganizationRow, error) { organization, err := idValue(organizationID); if err != nil { return nil, err }; return q.ListCMSTagsForOrganization(ctx, organization) }
+func postFrom(row dbgen.CmsPost) (domain.Post, error) { id, err := stringID(row.ID); if err != nil { return domain.Post{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Post{}, err }; author, err := stringID(row.AuthorID); if err != nil { return domain.Post{}, err }; post := domain.Post{ID: domain.PostID(id), OrganizationID: domain.OrganizationID(organization), AuthorID: domain.UserID(author), Slug: domain.Slug(row.Slug), Title: row.Title, Body: row.Body, Status: domain.PostStatus(row.Status), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}; if row.CategoryID.Valid { category, err := stringID([]byte(row.CategoryID.String)); if err != nil { return domain.Post{}, err }; value := domain.CategoryID(category); post.CategoryID = &value }; if row.PublishedAt.Valid { post.PublishedAt = &row.PublishedAt.Time }; return post, nil }
+func categoryFrom(row dbgen.ListCMSCategoriesForOrganizationRow) (domain.Category, error) { id, err := stringID(row.ID); if err != nil { return domain.Category{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Category{}, err }; return domain.Category{ID: domain.CategoryID(id), OrganizationID: domain.OrganizationID(organization), Name: row.Name, Slug: domain.Slug(row.Slug)}, nil }
+func tagFrom(row dbgen.ListCMSTagsForOrganizationRow) (domain.Tag, error) { id, err := stringID(row.ID); if err != nil { return domain.Tag{}, err }; organization, err := stringID(row.OrganizationID); if err != nil { return domain.Tag{}, err }; return domain.Tag{ID: domain.TagID(id), OrganizationID: domain.OrganizationID(organization), Name: row.Name, Slug: domain.Slug(row.Slug)}, nil }
+{{end}}
+
+var _ Store = (*SQLStore)(nil)

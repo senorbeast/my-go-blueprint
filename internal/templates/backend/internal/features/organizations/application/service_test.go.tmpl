@@ -1,0 +1,48 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"{{.Module}}/backend/internal/features/organizations/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+)
+
+type recordingRepository struct { organization domain.Organization; membership domain.Membership; role domain.Role; permission domain.Permission; assignedOrganization domain.ID; assignedUser platformauth.UserID; assignedRole domain.RoleID }
+func (r *recordingRepository) Create(_ context.Context, organization domain.Organization, membership domain.Membership, role domain.Role, permission domain.Permission) error { r.organization, r.membership, r.role, r.permission = organization, membership, role, permission; return nil }
+func (*recordingRepository) FindMembership(context.Context, domain.ID, platformauth.UserID) (domain.Membership, error) { return domain.Membership{}, nil }
+func (*recordingRepository) DefaultOrganization(context.Context, platformauth.UserID) (domain.Organization, error) { return domain.Organization{}, nil }
+func (*recordingRepository) Permissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error) { return nil, nil }
+func (r *recordingRepository) AssignRole(_ context.Context, organizationID domain.ID, userID platformauth.UserID, roleID domain.RoleID) error { r.assignedOrganization, r.assignedUser, r.assignedRole = organizationID, userID, roleID; return nil }
+
+type fixedClock struct{ now time.Time }
+func (c fixedClock) Now() time.Time { return c.now }
+type sequenceIDs struct { values []string; next int }
+func (g *sequenceIDs) New() string { value := g.values[g.next]; g.next++; return value }
+type recordingAuthorizer struct { err error; calls int }
+func (a *recordingAuthorizer) Authorize(context.Context, platformauth.Principal, authorization.Permission, authorization.Resource) error { a.calls++; return a.err }
+
+func TestCreateProvisionsOwnerRoleAndPlatformAdmin(t *testing.T) {
+	repository := &recordingRepository{}
+	service := New(repository, &recordingAuthorizer{}, fixedClock{now: time.Unix(100, 0)}, &sequenceIDs{values: []string{"organization", "owner-role", "platform-admin"}})
+	organization, err := service.Create(context.Background(), platformauth.Principal{UserID: "owner"}, "Acme")
+	if err != nil { t.Fatalf("create organization: %v", err) }
+	if organization.ID != "organization" || repository.membership.UserID != "owner" || repository.membership.OrganizationID != organization.ID { t.Fatalf("owner membership = %#v for organization %#v", repository.membership, organization) }
+	if repository.role.ID != "owner-role" || repository.role.Name != "owner" || repository.role.OrganizationID != organization.ID { t.Fatalf("owner role = %#v", repository.role) }
+	if repository.permission.ID != "platform-admin" || repository.permission.Name != "platform.admin" { t.Fatalf("owner permission = %#v", repository.permission) }
+}
+
+func TestAssignRoleDelegatesOnlyAfterAuthorization(t *testing.T) {
+	repository := &recordingRepository{}
+	authorizer := &recordingAuthorizer{}
+	service := New(repository, authorizer, fixedClock{}, &sequenceIDs{})
+	principal := platformauth.Principal{UserID: "owner", OrganizationID: "organization"}
+	if err := service.AssignRole(context.Background(), principal, "member", "editor"); err != nil { t.Fatalf("assign role: %v", err) }
+	if authorizer.calls != 1 || repository.assignedOrganization != "organization" || repository.assignedUser != "member" || repository.assignedRole != "editor" { t.Fatalf("assignment = %#v, authorization calls = %d", repository, authorizer.calls) }
+	authorizer.err = errors.New("forbidden")
+	if err := service.AssignRole(context.Background(), principal, "other-member", "editor"); !errors.Is(err, authorizer.err) { t.Fatalf("authorization error = %v", err) }
+	if repository.assignedUser != "member" { t.Fatalf("unauthorized assignment was delegated: %#v", repository) }
+}

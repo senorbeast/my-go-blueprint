@@ -123,6 +123,9 @@ func includeFeatureAsset(root, relative string, config spec.Config) bool {
 	if strings.HasPrefix(relative, "internal/features/cms/") {
 		return config.Has(spec.FeatureCMS)
 	}
+	if strings.HasPrefix(relative, "internal/features/jobs/") || strings.HasPrefix(relative, "internal/platform/jobs/") {
+		return config.Has(spec.FeatureJobs)
+	}
 	if strings.HasPrefix(relative, "internal/features/crm/") {
 		return config.Has(spec.FeatureCRM)
 	}
@@ -140,7 +143,7 @@ func includeFeatureAsset(root, relative string, config spec.Config) bool {
 		return config.Has(spec.FeatureJobs)
 	case strings.HasPrefix(base, "00006_"), strings.HasPrefix(base, "00007_"), strings.HasPrefix(base, "00008_"), strings.HasPrefix(base, "00009_"):
 		return config.Has(spec.FeatureRBAC)
-	case strings.HasPrefix(base, "00010_"), strings.HasPrefix(base, "00011_"), strings.HasPrefix(base, "00012_"):
+	case strings.HasPrefix(base, "00010_"), strings.HasPrefix(base, "00011_"), strings.HasPrefix(base, "00012_"), strings.HasPrefix(base, "00013_"):
 		return config.Has(spec.FeatureAuth)
 	case strings.HasPrefix(base, "0002"):
 		return config.Has(spec.FeatureCMS)

@@ -1,0 +1,50 @@
+-- name: CreateOrganization :exec
+INSERT INTO organizations (id, name, created_at)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3{{else}}?, ?, ?{{end}});
+
+-- name: CreateMembership :exec
+INSERT INTO memberships (organization_id, user_id)
+VALUES ({{if eq .Database "postgres"}}$1, $2{{else}}?, ?{{end}});
+
+-- name: FindMembership :one
+SELECT 1 FROM memberships
+WHERE organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+  AND user_id = {{if eq .Database "postgres"}}$2{{else}}?{{end}};
+
+-- name: GetDefaultOrganizationForUser :one
+SELECT o.id, o.name, o.created_at
+FROM organizations o
+JOIN memberships m ON m.organization_id = o.id
+WHERE m.user_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+ORDER BY o.created_at ASC, o.id ASC
+LIMIT 1;
+
+{{if .RBAC}}
+-- name: CreateRole :exec
+INSERT INTO roles (id, organization_id, name)
+VALUES ({{if eq .Database "postgres"}}$1, $2, $3{{else}}?, ?, ?{{end}});
+
+-- name: CreatePermissionIfAbsent :exec
+{{if eq .Database "postgres"}}INSERT INTO permissions (id, name) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING;{{else}}INSERT IGNORE INTO permissions (id, name) VALUES (?, ?);{{end}}
+
+-- name: GrantRolePermissionByName :exec
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT {{if eq .Database "postgres"}}$1, id{{else}}?, id{{end}} FROM permissions
+WHERE name = {{if eq .Database "postgres"}}$2{{else}}?{{end}};
+
+-- name: AssignMembershipRole :execrows
+INSERT INTO membership_roles (organization_id, user_id, role_id)
+SELECT {{if eq .Database "postgres"}}$1, $2, r.id{{else}}?, ?, r.id{{end}}
+FROM roles r
+WHERE r.id = {{if eq .Database "postgres"}}$3{{else}}?{{end}}
+  AND r.organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}};
+
+-- name: ListMembershipPermissions :many
+SELECT DISTINCT p.name
+FROM permissions p
+JOIN role_permissions rp ON rp.permission_id = p.id
+JOIN membership_roles mr ON mr.role_id = rp.role_id
+WHERE mr.organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+  AND mr.user_id = {{if eq .Database "postgres"}}$2{{else}}?{{end}}
+ORDER BY p.name;
+{{end}}

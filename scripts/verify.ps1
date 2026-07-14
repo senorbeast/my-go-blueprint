@@ -21,3 +21,32 @@ Write-Host "Using Go: $goPath"
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
+
+$fixture = Join-Path ([System.IO.Path]::GetTempPath()) ("go-blueprint-auth-" + [guid]::NewGuid().ToString("N"))
+try {
+    & $goPath run . create --name verify-auth --module example.com/verify-auth --database postgres --seed minimal --no-frontend --feature auth --output $fixture
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    Push-Location (Join-Path $fixture "backend")
+    try {
+        & $goPath mod tidy
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        & $goPath tool sqlc generate
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        & $goPath test ./...
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    } finally {
+        Pop-Location
+    }
+} finally {
+    if (Test-Path -LiteralPath $fixture) {
+        Remove-Item -LiteralPath $fixture -Recurse -Force
+    }
+}
