@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+{{if .Auth}}	"golang.org/x/crypto/bcrypt"
+{{end}}
 {{if eq .Database "postgres"}}	_ "github.com/jackc/pgx/v5/stdlib"
 {{else}}	_ "github.com/go-sql-driver/mysql"
 {{end}})
@@ -30,10 +32,19 @@ func main() {
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil { panic(fmt.Errorf("seed statement: %w", err)) }
 	}
+{{if .Auth}}	passwordHash, err := bcrypt.GenerateFromPassword([]byte(demoPassword), bcrypt.DefaultCost)
+	if err != nil { panic(fmt.Errorf("hash demo credential: %w", err)) }
+	if _, err := tx.ExecContext(ctx, demoCredentialStatement, passwordHash); err != nil { panic(fmt.Errorf("seed demo credential: %w", err)) }
+{{end}}
 	if err := tx.Commit(); err != nil { panic(err) }
 	fmt.Printf("seed profile %s applied idempotently\n", *profile)
 }
 
+{{if .Auth}}const demoPassword = "DemoPass123!"
+
+const demoCredentialStatement = `INSERT INTO user_credentials(user_id,password_hash) VALUES ({{if eq .Database "postgres"}}'00000000-0000-0000-0000-000000000001',$1{{else}}UNHEX(REPLACE('00000000-0000-0000-0000-000000000001','-','')),?{{end}}) {{if eq .Database "postgres"}}ON CONFLICT (user_id) DO NOTHING{{else}}ON DUPLICATE KEY UPDATE user_id = user_id{{end}}`
+
+{{end}}
 func minimalStatements() []string {
 	return []string{
 {{if .Auth}}{{if eq .Database "postgres"}}		`INSERT INTO users(id,email,display_name) VALUES ('00000000-0000-0000-0000-000000000001','owner@example.test','Demo Owner') ON CONFLICT DO NOTHING`,

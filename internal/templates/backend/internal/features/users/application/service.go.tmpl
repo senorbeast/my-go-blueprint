@@ -18,6 +18,7 @@ type Service struct{repo domain.Repository;authz authorization.Authorizer;ids ID
 func New(repo domain.Repository,authz authorization.Authorizer,ids IDGenerator,clock Clock)*Service{return &Service{repo,authz,ids,clock}}
 type CreateUser struct{Email,DisplayName string}
 type Signup struct{Email,DisplayName,Password string}
+func(s *Service)Current(ctx context.Context,p auth.Principal)(domain.User,error){return s.repo.FindByID(ctx,string(p.OrganizationID),domain.ID(p.UserID))}
 func(s *Service)Create(ctx context.Context,p auth.Principal,cmd CreateUser)(domain.User,error){if err:=s.authz.Authorize(ctx,p,"users.create",authorization.Resource{Kind:"users",OrganizationID:p.OrganizationID});err!=nil{return domain.User{},err};email,err:=domain.NewEmail(cmd.Email);if err!=nil{return domain.User{},err};u:=domain.User{ID:domain.ID(s.ids.New()),Email:email,DisplayName:strings.TrimSpace(cmd.DisplayName),CreatedAt:s.clock.Now()};return u,s.repo.Create(ctx,u)}
 func(s *Service)List(ctx context.Context,p auth.Principal,page pagination.Request)(pagination.Page[domain.User],error){if err:=s.authz.Authorize(ctx,p,"users.view",authorization.Resource{Kind:"users",OrganizationID:p.OrganizationID});err!=nil{return pagination.Page[domain.User]{},err};return s.repo.List(ctx,domain.ListQuery{OrganizationID:string(p.OrganizationID),Page:page})}
 

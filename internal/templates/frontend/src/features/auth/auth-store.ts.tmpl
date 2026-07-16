@@ -5,10 +5,12 @@ type AuthUIState = {
   permissions: readonly string[];
   setActiveOrganization: (id?: string) => void;
   setPermissions: (permissions: readonly string[]) => void;
+  clearSession: () => void;
 };
 export const useAuthUI = create<AuthUIState>((set) => ({
   activeOrganizationId: undefined,
   permissions: [],
   setActiveOrganization: (activeOrganizationId) => set({ activeOrganizationId }),
   setPermissions: (permissions) => set({ permissions }),
+  clearSession: () => set({ activeOrganizationId: undefined, permissions: [] }),
 }));

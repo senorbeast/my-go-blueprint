@@ -6,6 +6,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"{{.Module}}/backend/internal/features/auth/application"
 	platformauth "{{.Module}}/backend/internal/platform/auth"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 )
 
@@ -21,19 +22,22 @@ type CredentialService interface {
 	Signup(context.Context, application.Signup) (application.Tokens, error)
 	Login(context.Context, application.Login) (application.Tokens, error)
 }
+type CurrentSessionService interface { Current(context.Context, platformauth.Principal) (application.SessionContext, error) }
 type Routes struct {
 	service SessionService
 	credentials CredentialService
+	current CurrentSessionService
 	cookies SessionCookiePolicy
 }
 
-func New(service SessionService, credentials CredentialService, cookies SessionCookiePolicy) Routes {
-	return Routes{service: service, credentials: credentials, cookies: cookies}
+func New(service SessionService, credentials CredentialService, current CurrentSessionService, cookies SessionCookiePolicy) Routes {
+	return Routes{service: service, credentials: credentials, current: current, cookies: cookies}
 }
 func (Routes) Descriptor() httpplatform.Descriptor {
 	return httpplatform.Descriptor{Prefix: "/api/v1/auth", Tags: []string{"Authentication"}, Authentication: httpplatform.Optional}
 }
 func (r Routes) Register(reg httpplatform.Registrar) error {
+	httpplatform.Register(reg, huma.Operation{OperationID: "current-session", Method: "GET", Path: "/api/v1/auth/me", Tags: []string{"Authentication"}}, func(ctx context.Context, _ *CurrentSessionInput) (*CurrentSessionOutput, error) { principal, ok := platformauth.PrincipalFrom(ctx); if !ok { return nil, platformerrors.New(platformerrors.Unauthenticated, "authentication_required", "Authentication is required") }; current, err := r.current.Current(ctx, principal); if err != nil { return nil, err }; organizations := make([]SessionOrganizationBody, len(current.Organizations)); for i, organization := range current.Organizations { organizations[i] = SessionOrganizationBody{ID: organization.ID, Name: organization.Name} }; return &CurrentSessionOutput{Body: CurrentSessionBody{ID: current.UserID, Email: current.Email, DisplayName: current.DisplayName, OrganizationID: current.OrganizationID, Organizations: organizations, Permissions: current.Permissions}}, nil })
 	httpplatform.Register(reg, huma.Operation{OperationID: "signup", Method: "POST", Path: "/api/v1/auth/signup", Tags: []string{"Authentication"}}, func(ctx context.Context, in *SignupInput) (*SessionOutput, error) {
 		tokens, err := r.credentials.Signup(ctx, application.Signup{Email: in.Body.Email, DisplayName: in.Body.DisplayName, Password: in.Body.Password, OrganizationName: in.Body.OrganizationName})
 		if err != nil { return nil, err }

@@ -75,3 +75,15 @@ func TestNightlyScenariosCoverEveryValidOptionPair(t *testing.T) {
 		t.Fatalf("nightly matrix misses %d valid pairs", len(want))
 	}
 }
+
+func TestResolvedFeatureGraphsEnumerateEveryValidCombination(t *testing.T) {
+	graphs := ResolvedFeatureGraphs()
+	if len(graphs) != 18 {
+		t.Fatalf("got %d valid feature graphs, want 18", len(graphs))
+	}
+	for _, features := range graphs {
+		if err := (Scenario{Name: "graph", Database: "postgres", Seed: "minimal", Features: features}).Validate(); err != nil {
+			t.Fatalf("invalid resolved graph %v: %v", features, err)
+		}
+	}
+}

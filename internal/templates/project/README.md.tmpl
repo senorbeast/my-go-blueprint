@@ -55,6 +55,18 @@ go run ./cmd/migrate up
 go run ./cmd/seed --profile {{.Seed}}
 ```
 
+{{if .Auth}}## Local demo sign-in
+
+Running either the `minimal` or `demo` seed profile creates this **development-only** owner account for `Demo Organization`:
+
+```text
+Email:    owner@example.test
+Password: DemoPass123!
+```
+
+The seed writes the password as a bcrypt hash and is idempotent. Do not use these public credentials outside local development; use the `none` profile and create an account through the sign-up screen for non-demo environments.
+{{end}}
+
 {{if .Jobs}}## Run workers{{if .Cron}} and scheduler{{end}}
 
 ```sh

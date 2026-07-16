@@ -22,7 +22,12 @@ import { CRMAdmin } from "@/features/crm/crm-admin";
 }
 {{end}}
 
-const rootRoute = createRootRoute({ component: () => <><header className="flex gap-4 border-b bg-white px-6 py-4"><Link to="/" className="font-semibold">{{ .Name }}</Link>{{if .CMS}}<Link to="/cms">CMS</Link>{{end}}{{if .CRM}}<Link to="/crm">CRM</Link>{{end}}</header><Outlet /></> });
+function AppHeader() {
+  {{if or .CMS .CRM}}const permissions = useAuthUI((state) => state.permissions);
+  {{end}}return <header className="border-b bg-card"><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-6 px-4 sm:px-6"><Link to="/" className="font-semibold tracking-tight">{{ .Name }}</Link><nav aria-label="Primary navigation" className="flex items-center gap-1 text-sm text-muted-foreground">{{if .CMS}}{permissions.includes("cms.posts.view") && <Link to="/cms" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Content</Link>}{{end}}{{if .CRM}}{permissions.some((permission) => permission.startsWith("crm.") && permission.endsWith(".view")) && <Link to="/crm" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">CRM</Link>}{{end}}</nav></div></header>;
+}
+
+const rootRoute = createRootRoute({ component: () => <><AppHeader /><Outlet /></> });
 {{if .Auth}}
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: AuthShell });
 {{else}}

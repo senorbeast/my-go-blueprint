@@ -1,11 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { AuthShell } from "./auth-shell";
-
 afterEach(() => vi.restoreAllMocks());
-test("shows the authenticated user", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "u1", email: "owner@example.test" }), { status: 200 }));
-  render(<QueryClientProvider client={new QueryClient()}><AuthShell /></QueryClientProvider>);
-  expect(await screen.findByText(/owner@example.test/)).toBeInTheDocument();
-});
+function renderAuth() { return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthShell /></QueryClientProvider>); }
+test("shows a usable sign-in form when the current-session endpoint is unavailable", async () => { vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 })); renderAuth(); expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument(); });
+test("signs in and opens the workspace without relying on the unavailable current-session endpoint", async () => { vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 404 })).mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 })); renderAuth(); await screen.findByRole("heading", { name: "Welcome back" }); fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "owner@example.test" } }); fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret-pass" } }); fireEvent.click(screen.getByRole("button", { name: "Sign in" })); expect(await screen.findByRole("heading", { name: "You’re signed in." })).toBeInTheDocument(); expect(screen.getByText("Signed in as owner@example.test")).toBeInTheDocument(); });

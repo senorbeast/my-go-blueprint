@@ -19,6 +19,13 @@ WHERE m.user_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
 ORDER BY o.created_at ASC, o.id ASC
 LIMIT 1;
 
+-- name: ListOrganizationsForUser :many
+SELECT o.id, o.name, o.created_at
+FROM organizations o
+JOIN memberships m ON m.organization_id = o.id
+WHERE m.user_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+ORDER BY o.created_at ASC, o.id ASC;
+
 {{if .RBAC}}
 -- name: CreateRole :exec
 INSERT INTO roles (id, organization_id, name)

@@ -35,3 +35,7 @@ type LogoutInput struct {
 type LogoutOutput struct {
 	SetCookie []string `header:"Set-Cookie"`
 }
+type CurrentSessionInput struct{}
+type CurrentSessionOutput struct { Body CurrentSessionBody }
+type SessionOrganizationBody struct { ID string `json:"id"`; Name string `json:"name"` }
+type CurrentSessionBody struct { ID string `json:"id"`; Email string `json:"email"`; DisplayName string `json:"displayName"`; OrganizationID string `json:"organizationId"`; Organizations []SessionOrganizationBody `json:"organizations"`; Permissions []string `json:"permissions"` }

@@ -63,6 +63,18 @@ func (s *SQLStore) DefaultOrganization(ctx context.Context, userID platformauth.
 	return domain.Organization{ID: domain.ID(id), Name: row.Name, CreatedAt: row.CreatedAt}, nil
 }
 
+func (s *SQLStore) ListOrganizationsForUser(ctx context.Context, userID platformauth.UserID) ([]domain.Organization, error) {
+	userValue, err := idValue(userID); if err != nil { return nil, err }
+	rows, err := dbgen.New(s.db).ListOrganizationsForUser(ctx, userValue)
+	if err != nil { return nil, fmt.Errorf("list user organizations: %w", err) }
+	organizations := make([]domain.Organization, 0, len(rows))
+	for _, row := range rows {
+		id, err := stringID(row.ID); if err != nil { return nil, err }
+		organizations = append(organizations, domain.Organization{ID: domain.ID(id), Name: row.Name, CreatedAt: row.CreatedAt})
+	}
+	return organizations, nil
+}
+
 {{if .RBAC}}
 func (s *SQLStore) ListPermissions(ctx context.Context, organizationID domain.ID, userID platformauth.UserID) ([]authorization.Permission, error) {
 	organizationValue, err := idValue(organizationID); if err != nil { return nil, err }

@@ -12,6 +12,7 @@ type Store interface {
 	CreateOrganizationWithOwner(context.Context, domain.Organization, domain.Membership, domain.Role, domain.Permission) error
 	FindMembership(context.Context, domain.ID, platformauth.UserID) (domain.Membership, error)
 	DefaultOrganization(context.Context, platformauth.UserID) (domain.Organization, error)
+	ListOrganizationsForUser(context.Context, platformauth.UserID) ([]domain.Organization, error)
 	ListPermissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error)
 	AssignRole(context.Context, domain.ID, platformauth.UserID, domain.RoleID) error
 }
@@ -25,6 +26,7 @@ func (r *Repository) FindMembership(ctx context.Context, o domain.ID, u platform
 	return r.store.FindMembership(ctx, o, u)
 }
 func (r *Repository) DefaultOrganization(ctx context.Context, u platformauth.UserID) (domain.Organization, error) { return r.store.DefaultOrganization(ctx, u) }
+func (r *Repository) ListForUser(ctx context.Context, u platformauth.UserID) ([]domain.Organization, error) { return r.store.ListOrganizationsForUser(ctx, u) }
 func (r *Repository) Permissions(ctx context.Context, o domain.ID, u platformauth.UserID) ([]authorization.Permission, error) {
 	return r.store.ListPermissions(ctx, o, u)
 }

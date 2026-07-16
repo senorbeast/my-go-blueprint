@@ -1,4 +1,15 @@
-import type { CursorPage, CMSPost, PostListOptions } from "./contracts";
+import type { CreateCMSPostInput, CursorPage, CMSPost, PostListOptions } from "./contracts";
+
+function csrfHeader(): Record<string, string> {
+  const value = typeof document === "undefined" ? undefined : document.cookie.split("; ").find((cookie) => cookie.startsWith("csrf_token="))?.split("=").slice(1).join("=");
+  return value ? { "X-CSRF-Token": decodeURIComponent(value) } : {};
+}
+
+async function requestPost(url: string, init?: RequestInit): Promise<CMSPost> {
+  const response = await fetch(url, { ...init, credentials: "include", headers: { ...csrfHeader(), ...(init?.headers ?? {}) } });
+  if (!response.ok) throw new Error(`Unable to save CMS post (${response.status})`);
+  return response.json() as Promise<CMSPost>;
+}
 
 export async function listCMSPosts(options: PostListOptions): Promise<CursorPage<CMSPost>> {
   const query = new URLSearchParams();
@@ -8,4 +19,12 @@ export async function listCMSPosts(options: PostListOptions): Promise<CursorPage
   const response = await fetch(`/api/v1/organizations/${encodeURIComponent(options.organizationId)}/cms/posts?${query}`, { credentials: "include" });
   if (!response.ok) throw new Error(`Unable to load CMS posts (${response.status})`);
   return response.json() as Promise<CursorPage<CMSPost>>;
+}
+
+export function createCMSPost(input: CreateCMSPostInput): Promise<CMSPost> {
+  return requestPost(`/api/v1/organizations/${encodeURIComponent(input.organizationId)}/cms/posts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ slug: input.slug, title: input.title, body: input.body }) });
+}
+
+export function publishCMSPost(organizationId: string, postId: string): Promise<CMSPost> {
+  return requestPost(`/api/v1/organizations/${encodeURIComponent(organizationId)}/cms/posts/${encodeURIComponent(postId)}/publish`, { method: "POST" });
 }

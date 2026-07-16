@@ -1,15 +1,39 @@
-import { useQuery } from "@tanstack/react-query";
-import "@/shared/api/client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { ArrowRight, LogOut, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuthUI } from "./auth-store";
 
-type CurrentUser = { id: string; email: string };
-async function currentUser(): Promise<CurrentUser> {
-  const response = await fetch("/api/v1/auth/me", { credentials: "include" });
-  if (!response.ok) throw new Error(response.status === 401 ? "Unauthenticated" : "Unable to load session");
-  return response.json() as Promise<CurrentUser>;
+type CurrentUser = { id: string; email: string; displayName?: string; organizationId: string; permissions: string[] };
+type AuthMode = "sign-in" | "sign-up";
+
+function csrfHeader(): Record<string, string> { const token = document.cookie.split("; ").find((entry) => entry.startsWith("csrf_token="))?.slice("csrf_token=".length); return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {}; }
+async function currentUser(): Promise<CurrentUser> { const response = await fetch("/api/v1/auth/me", { credentials: "include" }); if (!response.ok) throw new Error(response.status === 401 ? "Unauthenticated" : "Unable to load session"); return response.json() as Promise<CurrentUser>; }
+async function submitCredentials(mode: AuthMode, values: { email: string; password: string; displayName: string; organizationName: string }) { const response = await fetch(`/api/v1/auth/${mode === "sign-up" ? "signup" : "login"}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(mode === "sign-up" ? values : { email: values.email, password: values.password }) }); if (!response.ok) throw new Error("We couldn't sign you in. Check your details and try again."); }
+async function logout(): Promise<void> { const response = await fetch("/api/v1/auth/logout", { method: "POST", credentials: "include", headers: csrfHeader() }); if (!response.ok) throw new Error("We couldn't sign you out. Please try again."); }
+
+function Field({ label, value, onChange, type = "text", autoComplete, minLength }: { label: string; value: string; onChange: (value: string) => void; type?: string; autoComplete?: string; minLength?: number }) { const id = label.toLowerCase().replaceAll(" ", "-"); return <label className="flex flex-col gap-2 text-sm font-medium" htmlFor={id}>{label}<input id={id} required type={type} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} minLength={minLength} className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>; }
+
+function AuthForm({ onAuthenticated }: { onAuthenticated: () => void }) {
+  const [mode, setMode] = useState<AuthMode>("sign-in"); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [displayName, setDisplayName] = useState(""); const [organizationName, setOrganizationName] = useState("");
+  const mutation = useMutation({ mutationFn: () => submitCredentials(mode, { email, password, displayName, organizationName }), onSuccess: onAuthenticated });
+  function onSubmit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); mutation.mutate(); }
+  return <main className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-7xl items-center gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1.15fr_0.85fr]"><section className="flex max-w-2xl flex-col gap-6"><Badge className="w-fit">Workspace starter</Badge><div className="flex flex-col gap-4"><h1 className="text-4xl font-bold tracking-tight sm:text-5xl">A real workspace from the first sign-in.</h1><p className="max-w-xl text-lg leading-8 text-muted-foreground">Create an organization, publish content, and manage customer work with role-aware access from one application.</p></div><div className="grid gap-3 sm:grid-cols-2"><Card><CardHeader><CardTitle>Content operations</CardTitle><CardDescription>Draft, review, publish, and keep an editorial history.</CardDescription></CardHeader></Card><Card><CardHeader><CardTitle>Customer operations</CardTitle><CardDescription>Organize companies, contacts, deals, and follow-up work.</CardDescription></CardHeader></Card></div></section><Card aria-labelledby="authentication-heading"><CardHeader><div className="grid grid-cols-2 rounded-md bg-muted p-1" role="tablist" aria-label="Authentication options">{(["sign-in", "sign-up"] as const).map((option) => <Button key={option} type="button" variant={mode === option ? "secondary" : "ghost"} size="sm" role="tab" aria-selected={mode === option} onClick={() => setMode(option)}>{option === "sign-in" ? "Sign in" : "Create account"}</Button>)}</div><CardTitle id="authentication-heading" className="pt-4">{mode === "sign-in" ? "Welcome back" : "Create your workspace"}</CardTitle><CardDescription>{mode === "sign-in" ? "Use the credentials configured for this workspace." : "Your account becomes the first owner of this organization."}</CardDescription></CardHeader><CardContent><form className="flex flex-col gap-4" onSubmit={onSubmit}>{mode === "sign-up" && <><Field label="Your name" value={displayName} onChange={setDisplayName} autoComplete="name" /><Field label="Organization name" value={organizationName} onChange={setOrganizationName} autoComplete="organization" /></>}<Field label="Email address" type="email" value={email} onChange={setEmail} autoComplete="email" /><Field label="Password" type="password" value={password} onChange={setPassword} autoComplete={mode === "sign-in" ? "current-password" : "new-password"} minLength={mode === "sign-up" ? 8 : undefined} />{mutation.isError && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{mutation.error.message}</p>}<Button disabled={mutation.isPending} className="w-full">{mutation.isPending ? "Working…" : mode === "sign-in" ? "Sign in" : "Create account"}<ArrowRight data-icon="inline-end" /></Button></form></CardContent></Card></main>;
 }
+
+function WorkspaceCard({ title, detail, to, action }: { title: string; detail: string; to: "/cms" | "/crm"; action: string }) { return <Card><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{detail}</CardDescription></CardHeader><CardFooter><Link to={to} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{action}<ArrowRight data-icon="inline-end" /></Link></CardFooter></Card>; }
+
+function Dashboard({ user, onSignOut }: { user: CurrentUser; onSignOut: () => void }) { return <main className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-10 sm:px-6"><header className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-2"><Badge className="w-fit">Active workspace</Badge><h1 className="text-3xl font-bold tracking-tight">Welcome{user.displayName ? `, ${user.displayName}` : ""}.</h1><p className="text-muted-foreground">Signed in as {user.email}</p></div><Button type="button" variant="outline" onClick={onSignOut}><LogOut data-icon="inline-start" />Sign out</Button></header><section className="grid gap-5 md:grid-cols-2">{{if .CMS}}{user.permissions.includes("cms.posts.view") && <WorkspaceCard title="Manage content" detail="Plan and publish posts from your CMS workspace." to="/cms" action="Open CMS" />}{{end}}{{if .CRM}}{user.permissions.some((permission) => permission.startsWith("crm.") && permission.endsWith(".view")) && <WorkspaceCard title="Manage customers" detail="Track companies, contacts, deals, and follow-up work." to="/crm" action="Open CRM" />}{{end}}</section><Card><CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck />Permission-aware workspace</CardTitle><CardDescription>Navigation and actions reflect your active organization membership and granted permissions.</CardDescription></CardHeader></Card></main>; }
+
 export function AuthShell() {
-  const user = useQuery({ queryKey: ["auth", "me"], queryFn: currentUser, retry: false });
-  if (user.isPending) return <main className="p-8">Loading session…</main>;
-  if (user.isError) return <main className="mx-auto max-w-md p-8"><h1 className="text-2xl font-semibold">Welcome</h1><p className="mt-2 text-slate-600">Sign in to continue.</p></main>;
-  return <main className="p-8"><h1 className="text-2xl font-semibold">Dashboard</h1><p className="mt-2 text-slate-600">Signed in as {user.data.email}</p></main>;
+  const client = useQueryClient(); const session = useQuery({ queryKey: ["auth", "me"], queryFn: currentUser, retry: false }); const setActiveOrganization = useAuthUI((state) => state.setActiveOrganization); const setPermissions = useAuthUI((state) => state.setPermissions); const clearSession = useAuthUI((state) => state.clearSession);
+  useEffect(() => { if (!session.data) return; setActiveOrganization(session.data.organizationId); setPermissions(session.data.permissions); }, [session.data, setActiveOrganization, setPermissions]);
+  const signOut = useMutation({ mutationFn: logout, onSuccess: () => { clearSession(); client.removeQueries({ queryKey: ["auth", "me"] }); } });
+  if (session.data) return <Dashboard user={session.data} onSignOut={() => signOut.mutate()} />;
+  if (session.isPending) return <main className="mx-auto max-w-7xl px-4 py-10 text-muted-foreground">Loading session…</main>;
+  return <AuthForm onAuthenticated={() => { void session.refetch(); }} />;
 }

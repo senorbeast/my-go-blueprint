@@ -2,3 +2,4 @@ export type PostStatus = "draft" | "published" | "archived";
 export interface CMSPost { id: string; organizationId: string; authorId: string; slug: string; title: string; body: string; status: PostStatus; publishedAt?: string; createdAt: string; updatedAt: string }
 export interface CursorPage<T> { items: T[]; nextCursor?: string; hasMore: boolean }
 export interface PostListOptions { organizationId: string; cursor?: string; status?: PostStatus; limit?: number }
+export interface CreateCMSPostInput { organizationId: string; slug: string; title: string; body: string }

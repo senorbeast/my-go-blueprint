@@ -37,6 +37,7 @@ func (s *Service) Create(ctx context.Context, principal platformauth.Principal, 
 func (s *Service) DefaultOrganization(ctx context.Context, userID platformauth.UserID) (domain.Organization, error) {
 	return s.repository.DefaultOrganization(ctx, userID)
 }
+func (s *Service) Permissions(ctx context.Context, principal platformauth.Principal) ([]authorization.Permission, error) { return s.repository.Permissions(ctx, domain.ID(principal.OrganizationID), principal.UserID) }
 func (s *Service) AssignRole(ctx context.Context, principal platformauth.Principal, userID platformauth.UserID, roleID domain.RoleID) error {
 	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil {
 		return err

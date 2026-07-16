@@ -9,4 +9,7 @@ go run ./cmd/seed --profile {{.Seed}}
 air
 ```
 
+{{if .Auth}}For local `minimal` or `demo` seed profiles, sign in with `owner@example.test` / `DemoPass123!`. This account is development-only; use `none` and sign up a new account for non-demo environments.
+{{end}}
+
 Domain and application packages point inward. Only `internal/bootstrap` constructs adapters.

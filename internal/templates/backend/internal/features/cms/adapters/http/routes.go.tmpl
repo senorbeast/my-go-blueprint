@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"{{.Module}}/backend/internal/features/cms/application"
@@ -23,5 +24,5 @@ func (r Routes) Register(reg httpplatform.Registrar) error {
 	return nil
 }
 func (r Routes) createPost(ctx context.Context, in *createPostInput) (*postOutput, error) { p, _ := auth.PrincipalFrom(ctx); post, err := r.service.CreatePost(ctx, p, application.CreatePost{Slug: in.Body.Slug, Title: in.Body.Title, Body: in.Body.Body, CategoryID: in.Body.CategoryID, TagIDs: in.Body.TagIDs}); if err != nil { return nil, err }; return &postOutput{Body: post}, nil }
-func (r Routes) listPosts(ctx context.Context, in *listPostsInput) (*postsOutput, error) { p, _ := auth.PrincipalFrom(ctx); limit, err := pagination.NewLimit(in.Limit); if err != nil { return nil, err }; page, err := r.service.ListPosts(ctx, p, domain.PostFilter{Status: in.Status, Search: in.Search}, pagination.Request{Cursor: in.Cursor, Limit: limit}); if err != nil { return nil, err }; return &postsOutput{Body: page}, nil }
+func (r Routes) listPosts(ctx context.Context, in *listPostsInput) (*postsOutput, error) { p, _ := auth.PrincipalFrom(ctx); limit, err := pagination.NewLimit(in.Limit); if err != nil { return nil, err }; var status *domain.PostStatus; if value := strings.TrimSpace(in.Status); value != "" { parsed := domain.PostStatus(value); status = &parsed }; page, err := r.service.ListPosts(ctx, p, domain.PostFilter{Status: status, Search: in.Search}, pagination.Request{Cursor: in.Cursor, Limit: limit}); if err != nil { return nil, err }; return &postsOutput{Body: page}, nil }
 func (r Routes) publishPost(ctx context.Context, in *publishPostInput) (*postOutput, error) { p, _ := auth.PrincipalFrom(ctx); post, err := r.service.PublishPost(ctx, p, in.PostID); if err != nil { return nil, err }; return &postOutput{Body: post}, nil }

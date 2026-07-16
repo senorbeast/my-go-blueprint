@@ -1,0 +1,24 @@
+package application
+
+import (
+ "context"
+ organizations "{{.Module}}/backend/internal/features/organizations/domain"
+ users "{{.Module}}/backend/internal/features/users/domain"
+ platformauth "{{.Module}}/backend/internal/platform/auth"
+ "{{.Module}}/backend/internal/platform/authorization"
+)
+type CurrentUserReader interface { Current(context.Context, platformauth.Principal) (users.User, error) }
+type PermissionReader interface { Permissions(context.Context, platformauth.Principal) ([]authorization.Permission, error) }
+type OrganizationReader interface { ListForUser(context.Context, platformauth.UserID) ([]organizations.Organization, error) }
+type SessionOrganization struct { ID, Name string }
+type SessionContext struct { UserID, Email, DisplayName, OrganizationID string; Organizations []SessionOrganization; Permissions []string }
+type SessionContexts struct { users CurrentUserReader; permissions PermissionReader; organizations OrganizationReader }
+func NewSessionContexts(users CurrentUserReader, permissions PermissionReader, organizations OrganizationReader) *SessionContexts { return &SessionContexts{users: users, permissions: permissions, organizations: organizations} }
+func (s *SessionContexts) Current(ctx context.Context, principal platformauth.Principal) (SessionContext, error) {
+ user, err := s.users.Current(ctx, principal); if err != nil { return SessionContext{}, err }
+ granted, err := s.permissions.Permissions(ctx, principal); if err != nil { return SessionContext{}, err }
+ memberships, err := s.organizations.ListForUser(ctx, principal.UserID); if err != nil { return SessionContext{}, err }
+ permissions := make([]string, len(granted)); for i, permission := range granted { permissions[i] = string(permission) }
+ available := make([]SessionOrganization, len(memberships)); for i, organization := range memberships { available[i] = SessionOrganization{ID: string(organization.ID), Name: organization.Name} }
+ return SessionContext{UserID: string(user.ID), Email: string(user.Email), DisplayName: user.DisplayName, OrganizationID: string(principal.OrganizationID), Organizations: available, Permissions: permissions}, nil
+}

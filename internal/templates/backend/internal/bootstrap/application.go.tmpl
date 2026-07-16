@@ -65,7 +65,8 @@ func New(_ context.Context) (*Application, error) {
 	authorizer := organizationauthorization.New(organizationRepository)
 	organizationService := organizationapplication.New(organizationRepository, authorizer, platformauth.Clock{}, platformauth.IDs{})
 	credentials := authapplication.NewCredentials(userService, organizationService, authService, userpassword.NewBcrypt(0))
-	if err := registrar.RegisterModule(authhttp.New(authService, credentials, authhttp.NewCookies(cfg.CookieSecure))); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	sessionContexts := authapplication.NewSessionContexts(userService, organizationService, organizationRepository)
+	if err := registrar.RegisterModule(authhttp.New(authService, credentials, sessionContexts, authhttp.NewCookies(cfg.CookieSecure))); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
 	if err := registrar.RegisterModule(organizationhttp.New(organizationService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
 	{{if .CMS}}
 	cmsStore := cmsrepository.NewSQLStore(db.SQL())

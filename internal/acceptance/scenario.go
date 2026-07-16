@@ -121,19 +121,12 @@ func NightlyScenarios() []Scenario {
 }
 
 func allCandidates() []Scenario {
-	features := []string{"auth", "rbac", "jobs", "cron", "cms", "crm"}
 	var candidates []Scenario
-	for mask := 0; mask < 1<<len(features); mask++ {
-		selected := make([]string, 0)
-		for index, feature := range features {
-			if mask&(1<<index) != 0 {
-				selected = append(selected, feature)
-			}
-		}
+	for graphIndex, selected := range ResolvedFeatureGraphs() {
 		for _, database := range []string{"postgres", "mysql"} {
 			for _, frontend := range []bool{false, true} {
 				for _, seed := range []string{"none", "minimal", "demo"} {
-					scenario := Scenario{Name: fmt.Sprintf("%s-%t-%s-%02x", database, frontend, seed, mask), Database: database, Frontend: frontend, Seed: seed, Features: selected}
+					scenario := Scenario{Name: fmt.Sprintf("%s-%t-%s-%02x", database, frontend, seed, graphIndex), Database: database, Frontend: frontend, Seed: seed, Features: selected}
 					if scenario.Validate() == nil {
 						candidates = append(candidates, scenario)
 					}
@@ -142,6 +135,29 @@ func allCandidates() []Scenario {
 		}
 	}
 	return candidates
+}
+
+// ResolvedFeatureGraphs is the generator's canonical valid feature graph set.
+// It keeps acceptance coverage aligned with dependency resolution: the
+// auth/RBAC/CMS/CRM branch has six valid states and jobs/cron has three.
+func ResolvedFeatureGraphs() [][]string {
+	workspace := [][]string{
+		nil,
+		{"auth"},
+		{"auth", "rbac"},
+		{"auth", "rbac", "cms"},
+		{"auth", "rbac", "crm"},
+		{"auth", "rbac", "cms", "crm"},
+	}
+	automation := [][]string{nil, {"jobs"}, {"jobs", "cron"}}
+	graphs := make([][]string, 0, len(workspace)*len(automation))
+	for _, left := range workspace {
+		for _, right := range automation {
+			features := append(append([]string(nil), left...), right...)
+			graphs = append(graphs, features)
+		}
+	}
+	return graphs
 }
 
 func optionPairs(scenario Scenario) map[string]bool {

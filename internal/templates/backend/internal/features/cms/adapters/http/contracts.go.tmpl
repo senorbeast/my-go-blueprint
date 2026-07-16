@@ -4,6 +4,6 @@ import "{{.Module}}/backend/internal/features/cms/domain"
 
 type createPostInput struct { OrganizationID string `path:"organizationID"`; Body struct { Slug string `json:"slug" minLength:"1"`; Title string `json:"title" minLength:"1" maxLength:"240"`; Body string `json:"body"`; CategoryID *domain.CategoryID `json:"categoryId,omitempty"`; TagIDs []domain.TagID `json:"tagIds,omitempty"` } }
 type postOutput struct { Body domain.Post }
-type listPostsInput struct { OrganizationID string `path:"organizationID"`; Limit uint16 `query:"limit" minimum:"1" maximum:"100" default:"20"`; Cursor string `query:"cursor"`; Status *domain.PostStatus `query:"status"`; Search string `query:"search" maxLength:"200"` }
+type listPostsInput struct { OrganizationID string `path:"organizationID"`; Limit uint16 `query:"limit" minimum:"1" maximum:"100" default:"20"`; Cursor string `query:"cursor"`; Status string `query:"status"`; Search string `query:"search" maxLength:"200"` }
 type postsOutput struct { Body any }
 type publishPostInput struct { OrganizationID string `path:"organizationID"`; PostID domain.PostID `path:"postID"` }
