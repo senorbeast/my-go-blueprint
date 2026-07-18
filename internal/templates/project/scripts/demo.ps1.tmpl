@@ -1,0 +1,65 @@
+$ErrorActionPreference = "Stop"
+
+function Import-DemoEnvironment {
+    param([string] $Path)
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line -match '^\s*(#|$)') { continue }
+        $pair = $line -split '=', 2
+        if ($pair.Count -ne 2) { continue }
+        [Environment]::SetEnvironmentVariable($pair[0].Trim(), $pair[1].Trim(), "Process")
+    }
+}
+
+$root = Split-Path -Parent $PSScriptRoot
+$environmentFile = Join-Path $root "backend/.env"
+if (-not (Test-Path -LiteralPath $environmentFile)) {
+    Copy-Item (Join-Path $root "backend/.env.example") $environmentFile
+}
+
+$overrides = @{
+    HTTP_ADDRESS = $env:HTTP_ADDRESS
+    DATABASE_URL = $env:DATABASE_URL
+    CORS_ORIGINS = $env:CORS_ORIGINS
+}
+Import-DemoEnvironment $environmentFile
+foreach ($name in $overrides.Keys) {
+    if (-not [string]::IsNullOrWhiteSpace($overrides[$name])) {
+        [Environment]::SetEnvironmentVariable($name, $overrides[$name], "Process")
+    }
+}
+
+$vitePort = if ($env:VITE_PORT) { $env:VITE_PORT } else { "5173" }
+$viteHost = if ($env:VITE_HOST) { $env:VITE_HOST } else { "127.0.0.1" }
+$apiProxyTarget = if ($env:VITE_API_PROXY_TARGET) { $env:VITE_API_PROXY_TARGET } else { "http://localhost$($env:HTTP_ADDRESS)" }
+[Environment]::SetEnvironmentVariable("VITE_PORT", $vitePort, "Process")
+[Environment]::SetEnvironmentVariable("VITE_HOST", $viteHost, "Process")
+[Environment]::SetEnvironmentVariable("VITE_API_PROXY_TARGET", $apiProxyTarget, "Process")
+
+Push-Location (Join-Path $root "backend")
+try {
+    docker compose up -d --wait db
+    go mod tidy
+    go tool sqlc generate
+    go run ./cmd/migrate up
+    go run ./cmd/seed --profile demo
+} finally {
+    Pop-Location
+}
+
+$processes = @()
+try {
+    $processes += Start-Process -FilePath "go" -ArgumentList "run", "./cmd/api" -WorkingDirectory (Join-Path $root "backend") -WindowStyle Hidden -PassThru
+{{if .Jobs}}    $processes += Start-Process -FilePath "go" -ArgumentList "run", "./cmd/worker" -WorkingDirectory (Join-Path $root "backend") -WindowStyle Hidden -PassThru
+{{end}}{{if .Cron}}    $processes += Start-Process -FilePath "go" -ArgumentList "run", "./cmd/scheduler" -WorkingDirectory (Join-Path $root "backend") -WindowStyle Hidden -PassThru
+{{end}}{{if .Frontend}}    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { throw "pnpm is required to run the frontend" }
+    if (-not (Test-Path -LiteralPath (Join-Path $root "frontend/node_modules"))) {
+        Push-Location (Join-Path $root "frontend")
+        try { pnpm install } finally { Pop-Location }
+    }
+    $processes += Start-Process -FilePath "pnpm" -ArgumentList "dev", "--", "--host", $viteHost, "--port", $vitePort -WorkingDirectory (Join-Path $root "frontend") -WindowStyle Hidden -PassThru
+    Write-Host "Demo running: frontend http://$viteHost`:$vitePort | API http://localhost$($env:HTTP_ADDRESS) | docs http://localhost$($env:HTTP_ADDRESS)/docs"
+{{else}}    Write-Host "Demo running: API http://localhost$($env:HTTP_ADDRESS) | docs http://localhost$($env:HTTP_ADDRESS)/docs"
+{{end}}    Wait-Process -Id $processes.Id
+} finally {
+    $processes | Where-Object { -not $_.HasExited } | Stop-Process -Force -ErrorAction SilentlyContinue
+}

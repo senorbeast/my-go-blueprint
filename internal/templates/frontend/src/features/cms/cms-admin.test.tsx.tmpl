@@ -1,14 +1,26 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 import { CMSAdmin } from "./cms-admin";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 test("renders seeded CMS posts and permission-aware actions", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ items: [{ id: "p1", organizationId: "o1", authorId: "u1", slug: "welcome", title: "Welcome", body: "Hello", status: "published", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }], hasMore: false }), { status: 200 }));
   render(<QueryClientProvider client={new QueryClient()}><CMSAdmin organizationId="o1" canCreate /></QueryClientProvider>);
   expect(await screen.findByText("Welcome")).toBeInTheDocument();
+  expect(screen.getByText("1 published")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "All content" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "New post" })).toBeInTheDocument();
+});
+
+test("filters the editorial queue through the public CMS list endpoint", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 })));
+  render(<QueryClientProvider client={new QueryClient()}><CMSAdmin organizationId="o1" canCreate /></QueryClientProvider>);
+  const drafts = await screen.findByRole("button", { name: "Drafts" });
+  fireEvent.click(drafts);
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/v1/organizations/o1/cms/posts?status=draft&limit=20", { credentials: "include" }));
+  expect(await screen.findByText("No draft posts yet.")).toBeInTheDocument();
 });
 
 test("publishes a draft through the public CMS endpoint", async () => {

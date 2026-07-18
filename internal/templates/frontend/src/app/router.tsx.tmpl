@@ -1,7 +1,7 @@
 import { createRootRoute, createRoute, createRouter, Link, Outlet } from "@tanstack/react-router";
 {{if .Auth}}
-import { AuthShell } from "@/features/auth/auth-shell";
-{{end}}{{if or .CMS .CRM}}import { useAuthUI } from "@/features/auth/auth-store";
+import { AuthShell, SessionHydrator } from "@/features/auth/auth-shell";
+{{end}}{{if or .CMS .CRM}}import { hasPermission, useAuthUI } from "@/features/auth/auth-store";
 {{end}}{{if .CMS}}
 import { CMSAdmin } from "@/features/cms/cms-admin";
 {{end}}{{if .CRM}}
@@ -12,7 +12,7 @@ import { CRMAdmin } from "@/features/crm/crm-admin";
   const organizationId = useAuthUI((state) => state.activeOrganizationId);
   const permissions = useAuthUI((state) => state.permissions);
   if (!organizationId) return <main className="p-8">Select an organization to manage content.</main>;
-  return <CMSAdmin organizationId={organizationId} canCreate={permissions.includes("cms.posts.create")} />;
+  return <CMSAdmin organizationId={organizationId} canCreate={hasPermission(permissions, "cms.posts.create")} canPublish={hasPermission(permissions, "cms.posts.publish")} />;
 }
 {{end}}{{if .CRM}}function CRMPage() {
   const organizationID = useAuthUI((state) => state.activeOrganizationId);
@@ -24,10 +24,10 @@ import { CRMAdmin } from "@/features/crm/crm-admin";
 
 function AppHeader() {
   {{if or .CMS .CRM}}const permissions = useAuthUI((state) => state.permissions);
-  {{end}}return <header className="border-b bg-card"><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-6 px-4 sm:px-6"><Link to="/" className="font-semibold tracking-tight">{{ .Name }}</Link><nav aria-label="Primary navigation" className="flex items-center gap-1 text-sm text-muted-foreground">{{if .CMS}}{permissions.includes("cms.posts.view") && <Link to="/cms" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Content</Link>}{{end}}{{if .CRM}}{permissions.some((permission) => permission.startsWith("crm.") && permission.endsWith(".view")) && <Link to="/crm" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">CRM</Link>}{{end}}</nav></div></header>;
+  {{end}}return <header className="border-b bg-card"><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-6 px-4 sm:px-6"><Link to="/" className="font-semibold tracking-tight">{{ .Name }}</Link><nav aria-label="Primary navigation" className="flex items-center gap-1 text-sm text-muted-foreground">{{if .CMS}}{hasPermission(permissions, "cms.posts.view") && <Link to="/cms" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Content</Link>}{{end}}{{if .CRM}}{hasPermission(permissions, "crm.companies.view") && <Link to="/crm" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">CRM</Link>}{{end}}</nav></div></header>;
 }
 
-const rootRoute = createRootRoute({ component: () => <><AppHeader /><Outlet /></> });
+const rootRoute = createRootRoute({ component: () => <><SessionHydrator /><AppHeader /><Outlet /></> });
 {{if .Auth}}
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: AuthShell });
 {{else}}

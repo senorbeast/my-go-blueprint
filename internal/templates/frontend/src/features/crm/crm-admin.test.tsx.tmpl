@@ -1,13 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CRMAdmin } from "./crm-admin";
 
 describe("CRMAdmin", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
   it("hides CRM data when the principal has no permissions", () => {
     render(<QueryClientProvider client={new QueryClient()}><CRMAdmin organizationID="org-1" permissions={[]} /></QueryClientProvider>);
     expect(screen.getByText(/do not have permission/i)).toBeInTheDocument();
+  });
+
+  it("shows all CRM sections and company actions to a platform administrator", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ items: [{ id: "company-1", organizationID: "org-1", name: "Acme Demo", createdAt: "2026-07-17T00:00:00Z" }], hasMore: false }), { status: 200 }));
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><CRMAdmin organizationID="org-1" permissions={["platform.admin"]} /></QueryClientProvider>);
+    expect(await screen.findByText("Acme Demo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add company" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deals" })).toBeInTheDocument();
   });
 
   it("creates a company and refreshes the company workspace", async () => {

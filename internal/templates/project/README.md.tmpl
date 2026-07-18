@@ -31,6 +31,22 @@ docker compose up -d db
 
 Copy `backend/.env.example` to `backend/.env` and adjust credentials when needed.
 
+## Run the complete local demo
+
+```sh
+make demo
+```
+
+This creates `backend/.env` from the example when it is absent, starts the database, regenerates sqlc output, migrates, applies the idempotent `demo` seed, and runs the API{{if .Jobs}}, worker{{end}}{{if .Cron}}, scheduler{{end}}{{if .Frontend}}, and frontend{{end}}. Press `Ctrl+C` to stop application processes; the database volume remains available for the next run.
+
+The API address comes from `backend/.env` (`HTTP_ADDRESS`, default `:8080`). Override ports without changing generated files when a local port is unavailable:
+
+```sh
+HTTP_ADDRESS=:18080 VITE_API_PROXY_TARGET=http://localhost:18080 VITE_PORT=5174 make demo
+```
+
+{{if .Frontend}}The frontend opens at `http://127.0.0.1:$VITE_PORT` (default `5173`) and sends `/api` requests to `VITE_API_PROXY_TARGET`; Swagger is at `http://localhost$HTTP_ADDRESS/docs`.{{else}}Swagger is at `http://localhost$HTTP_ADDRESS/docs`.{{end}}
+
 ## Run the backend with Air
 
 ```sh

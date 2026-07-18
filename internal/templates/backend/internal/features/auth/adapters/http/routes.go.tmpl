@@ -2,9 +2,11 @@ package http
 
 import (
 	"context"
+	"errors"
 
 	"github.com/danielgtaylor/huma/v2"
 	"{{.Module}}/backend/internal/features/auth/application"
+	userdomain "{{.Module}}/backend/internal/features/users/domain"
 	platformauth "{{.Module}}/backend/internal/platform/auth"
 	platformerrors "{{.Module}}/backend/internal/platform/errors"
 	httpplatform "{{.Module}}/backend/internal/platform/http"
@@ -45,7 +47,10 @@ func (r Routes) Register(reg httpplatform.Registrar) error {
 	})
 	httpplatform.Register(reg, huma.Operation{OperationID: "login", Method: "POST", Path: "/api/v1/auth/login", Tags: []string{"Authentication"}}, func(ctx context.Context, in *LoginInput) (*SessionOutput, error) {
 		tokens, err := r.credentials.Login(ctx, application.Login{Email: in.Body.Email, Password: in.Body.Password})
-		if err != nil { return nil, err }
+		if err != nil {
+			if errors.Is(err, userdomain.ErrInvalidCredentials) { return nil, huma.Error401Unauthorized("Invalid email or password") }
+			return nil, err
+		}
 		return r.sessionOutput(tokens), nil
 	})
 	httpplatform.Register(reg, huma.Operation{OperationID: "refresh-session", Method: "POST", Path: "/api/v1/auth/refresh", Tags: []string{"Authentication"}}, func(ctx context.Context, in *RefreshInput) (*RefreshOutput, error) {

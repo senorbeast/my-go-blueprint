@@ -15,6 +15,7 @@ export async function listCMSPosts(options: PostListOptions): Promise<CursorPage
   const query = new URLSearchParams();
   if (options.cursor) query.set("cursor", options.cursor);
   if (options.status) query.set("status", options.status);
+  if (options.search?.trim()) query.set("search", options.search.trim());
   query.set("limit", String(options.limit ?? 20));
   const response = await fetch(`/api/v1/organizations/${encodeURIComponent(options.organizationId)}/cms/posts?${query}`, { credentials: "include" });
   if (!response.ok) throw new Error(`Unable to load CMS posts (${response.status})`);

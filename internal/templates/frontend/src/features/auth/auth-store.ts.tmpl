@@ -1,5 +1,9 @@
 import { create } from "zustand";
 
+export function hasPermission(permissions: readonly string[], required: string): boolean {
+  return permissions.includes("platform.admin") || permissions.includes(required);
+}
+
 type AuthUIState = {
   activeOrganizationId?: string;
   permissions: readonly string[];

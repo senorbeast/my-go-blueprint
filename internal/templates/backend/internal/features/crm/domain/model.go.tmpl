@@ -19,12 +19,12 @@ const (
 	Activities EntityKind = "activities"
 )
 
-type Company struct { ID ID; OrganizationID OrganizationID; Name string; CreatedAt time.Time }
-type Contact struct { ID ID; OrganizationID OrganizationID; CompanyID *ID; Name, Email string; CreatedAt time.Time }
-type Pipeline struct { ID ID; OrganizationID OrganizationID; Name string; CreatedAt time.Time }
-type Stage struct { ID ID; OrganizationID OrganizationID; PipelineID ID; Name string; Position int; CreatedAt time.Time }
-type Deal struct { ID ID; OrganizationID OrganizationID; CompanyID, PipelineID, StageID ID; Name string; ValueCents int64; CreatedAt time.Time }
-type Activity struct { ID ID; OrganizationID OrganizationID; DealID ID; Kind, Note string; OccurredAt, CreatedAt time.Time }
+type Company struct { ID ID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; Name string `json:"name"`; CreatedAt time.Time `json:"createdAt"` }
+type Contact struct { ID ID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; CompanyID *ID `json:"companyId,omitempty"`; Name string `json:"name"`; Email string `json:"email"`; CreatedAt time.Time `json:"createdAt"` }
+type Pipeline struct { ID ID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; Name string `json:"name"`; CreatedAt time.Time `json:"createdAt"` }
+type Stage struct { ID ID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; PipelineID ID `json:"pipelineId"`; Name string `json:"name"`; Position int `json:"position"`; CreatedAt time.Time `json:"createdAt"` }
+type Deal struct { ID ID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; CompanyID ID `json:"companyId"`; PipelineID ID `json:"pipelineId"`; StageID ID `json:"stageId"`; Name string `json:"name"`; ValueCents int64 `json:"valueCents"`; CreatedAt time.Time `json:"createdAt"` }
+type Activity struct { ID ID `json:"id"`; OrganizationID OrganizationID `json:"organizationId"`; DealID ID `json:"dealId"`; Kind string `json:"kind"`; Note string `json:"note"`; OccurredAt time.Time `json:"occurredAt"`; CreatedAt time.Time `json:"createdAt"` }
 
 var ErrNotFound = errors.New("CRM resource not found")
 

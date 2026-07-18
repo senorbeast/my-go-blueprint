@@ -1,4 +1,4 @@
-.PHONY: db-up db-down migrate seed backend{{if .Jobs}} worker{{end}}{{if .Cron}} scheduler{{end}}{{if .Frontend}} frontend{{end}} verify-generated sqlc
+.PHONY: db-up db-down migrate seed backend{{if .Jobs}} worker{{end}}{{if .Cron}} scheduler{{end}}{{if .Frontend}} frontend{{end}} demo verify-generated sqlc
 
 db-up:
 	cd backend && docker compose up -d db
@@ -13,7 +13,7 @@ seed:
 	cd backend && go run ./cmd/seed --profile {{.Seed}}
 
 sqlc:
-	cd backend && sqlc generate
+	cd backend && go tool sqlc generate
 
 backend:
 	cd backend && air
@@ -28,6 +28,41 @@ scheduler:
 frontend:
 	cd frontend && pnpm dev
 {{end}}
+
+# Starts the local database, applies migrations, seeds representative demo data,
+# then keeps every selected application process in the foreground. Press Ctrl+C
+# to stop API/frontend/worker/scheduler; the database volume is preserved.
+ifeq ($(OS),Windows_NT)
+demo:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo.ps1
+else
+demo:
+	@sh -ec '\
+		if [ ! -f backend/.env ]; then cp backend/.env.example backend/.env; fi; \
+		requested_http_address=$${HTTP_ADDRESS-}; requested_database_url=$${DATABASE_URL-}; requested_cors_origins=$${CORS_ORIGINS-}; \
+		set -a; . backend/.env; set +a; \
+		if [ -n "$$requested_http_address" ]; then HTTP_ADDRESS="$$requested_http_address"; fi; \
+		if [ -n "$$requested_database_url" ]; then DATABASE_URL="$$requested_database_url"; fi; \
+		if [ -n "$$requested_cors_origins" ]; then CORS_ORIGINS="$$requested_cors_origins"; fi; \
+		export HTTP_ADDRESS DATABASE_URL CORS_ORIGINS; \
+		VITE_PORT=$${VITE_PORT:-5173}; VITE_HOST=$${VITE_HOST:-127.0.0.1}; \
+		VITE_API_PROXY_TARGET=$${VITE_API_PROXY_TARGET:-http://localhost$${HTTP_ADDRESS}}; \
+		cd backend && docker compose up -d --wait db; cd ..; \
+		(cd backend && go mod tidy); \
+		(cd backend && go tool sqlc generate); \
+		(cd backend && go run ./cmd/migrate up); \
+		(cd backend && go run ./cmd/seed --profile demo); \
+		pids=""; trap '\''kill $$pids 2>/dev/null || true'\'' INT TERM EXIT; \
+		(cd backend && go run ./cmd/api) & pids="$$pids $$!"; \
+{{if .Jobs}}		(cd backend && go run ./cmd/worker) & pids="$$pids $$!"; \
+{{end}}{{if .Cron}}		(cd backend && go run ./cmd/scheduler) & pids="$$pids $$!"; \
+{{end}}{{if .Frontend}}		if ! command -v pnpm >/dev/null 2>&1; then echo "pnpm is required to run the frontend" >&2; exit 1; fi; \
+		if [ ! -d frontend/node_modules ]; then (cd frontend && pnpm install); fi; \
+		(cd frontend && VITE_API_PROXY_TARGET="$$VITE_API_PROXY_TARGET" VITE_PORT="$$VITE_PORT" VITE_HOST="$$VITE_HOST" pnpm dev -- --host "$$VITE_HOST" --port "$$VITE_PORT") & pids="$$pids $$!"; \
+		echo "Demo running: frontend http://$$VITE_HOST:$$VITE_PORT | API http://localhost$$HTTP_ADDRESS | docs http://localhost$$HTTP_ADDRESS/docs"; \
+{{else}}		echo "Demo running: API http://localhost$$HTTP_ADDRESS | docs http://localhost$$HTTP_ADDRESS/docs"; \
+{{end}}		wait'
+endif
 
 verify-generated:
 	$(MAKE) -C backend verify

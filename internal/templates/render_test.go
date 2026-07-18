@@ -90,6 +90,55 @@ func TestRenderBackendVerificationRegeneratesSQLCBeforeCompilation(t *testing.T)
 	}
 }
 
+func TestRenderDemoCommandStartsConfiguredFullStack(t *testing.T) {
+	config := spec.DefaultConfig()
+	config.Name = "acme"
+	config.Module = "example.com/acme"
+	config.Features = []spec.Feature{spec.FeatureAuth, spec.FeatureRBAC, spec.FeatureJobs, spec.FeatureCron}
+	config, err := spec.Resolve(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := (Renderer{}).Render(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	makefile := string(files["Makefile"])
+	unixDemoStart := strings.Index(makefile, "else\ndemo:")
+	if unixDemoStart < 0 {
+		t.Fatalf("generated Unix demo branch is missing:\n%s", makefile)
+	}
+	unixDemo := makefile[unixDemoStart:]
+	tidy := strings.Index(unixDemo, "go mod tidy")
+	sqlc := strings.Index(unixDemo, "go tool sqlc generate")
+	if tidy < 0 || sqlc < 0 || tidy > sqlc {
+		t.Fatalf("generated Unix demo command must bootstrap Go modules before sqlc:\\n%s", makefile)
+	}
+	for _, want := range []string{"demo", "demo:", "docker compose up -d --wait db", "./cmd/migrate up", "./cmd/seed --profile demo", "./cmd/api", "pnpm dev", "./cmd/worker", "./cmd/scheduler"} {
+		if !strings.Contains(makefile, want) {
+			t.Fatalf("generated demo command missing %q:\\n%s", want, makefile)
+		}
+	}
+	readme := string(files["README.md"])
+	if !strings.Contains(readme, "make demo") || !strings.Contains(readme, "VITE_API_PROXY_TARGET") {
+		t.Fatalf("generated README must document demo command and port override:\\n%s", readme)
+	}
+	viteConfig := string(files["frontend/vite.config.ts"])
+	if !strings.Contains(viteConfig, "VITE_API_PROXY_TARGET") || !strings.Contains(viteConfig, "VITE_PORT") {
+		t.Fatalf("generated Vite config must allow demo port overrides:\\n%s", viteConfig)
+	}
+	windowsDemo, ok := files["scripts/demo.ps1"]
+	if !ok {
+		t.Fatal("generated Windows demo runner is missing")
+	}
+	windowsDemoText := string(windowsDemo)
+	windowsTidy := strings.Index(windowsDemoText, "go mod tidy")
+	windowsSQLC := strings.Index(windowsDemoText, "go tool sqlc generate")
+	if windowsTidy < 0 || windowsSQLC < 0 || windowsTidy > windowsSQLC {
+		t.Fatalf("generated Windows demo runner must bootstrap Go modules before sqlc:\\n%s", windowsDemoText)
+	}
+}
+
 func TestRenderIncludesOnlySelectedBusinessPack(t *testing.T) {
 	config := spec.DefaultConfig()
 	config.Name = "acme"

@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	"{{.Module}}/backend/internal/features/auth/application"
+	userdomain "{{.Module}}/backend/internal/features/users/domain"
 	platformauth "{{.Module}}/backend/internal/platform/auth"
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 )
@@ -21,6 +23,10 @@ func (routeSessions) Logout(context.Context, platformauth.Principal) error { ret
 type routeCredentials struct{}
 func (routeCredentials) Signup(context.Context, application.Signup) (application.Tokens, error) { return application.Tokens{AccessToken: "access", RefreshToken: "refresh", AccessExpiry: time.Unix(3600, 0), RefreshExpiry: time.Unix(7200, 0)}, nil }
 func (routeCredentials) Login(context.Context, application.Login) (application.Tokens, error) { return application.Tokens{}, nil }
+type rejectedLoginCredentials struct{ routeCredentials }
+func (rejectedLoginCredentials) Login(context.Context, application.Login) (application.Tokens, error) { return application.Tokens{}, userdomain.ErrInvalidCredentials }
+type failingLoginCredentials struct{ routeCredentials }
+func (failingLoginCredentials) Login(context.Context, application.Login) (application.Tokens, error) { return application.Tokens{}, errors.New("session store unavailable") }
 type routeCurrent struct{}
 func (routeCurrent) Current(context.Context, platformauth.Principal) (application.SessionContext, error) { return application.SessionContext{}, nil }
 
@@ -47,4 +53,30 @@ func TestCSRFRejectsCookieAuthenticatedUnsafeRequest(t *testing.T) {
 	request.AddCookie(&http.Cookie{Name: "access_token", Value: "access"})
 	e.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden { t.Fatalf("CSRF status = %d", recorder.Code) }
+}
+
+func TestLoginRejectsInvalidCredentialsWithSafeUnauthorizedProblem(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = httpplatform.ProblemHandler(zap.NewNop())
+	registrar := httpplatform.NewRegistrar(e)
+	if err := registrar.RegisterModule(New(routeSessions{}, rejectedLoginCredentials{}, routeCurrent{}, NewCookies(false))); err != nil { t.Fatal(err) }
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"owner@example.test","password":"wrong-password"}`))
+	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	e.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized { t.Fatalf("login status = %d, body = %s", recorder.Code, recorder.Body.String()) }
+	if !strings.Contains(recorder.Body.String(), `"detail":"Invalid email or password"`) { t.Fatalf("login problem = %s", recorder.Body.String()) }
+	if strings.Contains(recorder.Body.String(), userdomain.ErrInvalidCredentials.Error()) { t.Fatalf("login problem leaked domain error: %s", recorder.Body.String()) }
+}
+
+func TestLoginLeavesUnexpectedErrorsAsInternalServerErrors(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = httpplatform.ProblemHandler(zap.NewNop())
+	registrar := httpplatform.NewRegistrar(e)
+	if err := registrar.RegisterModule(New(routeSessions{}, failingLoginCredentials{}, routeCurrent{}, NewCookies(false))); err != nil { t.Fatal(err) }
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"owner@example.test","password":"DemoPass123!"}`))
+	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	e.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusInternalServerError { t.Fatalf("login status = %d, body = %s", recorder.Code, recorder.Body.String()) }
 }
