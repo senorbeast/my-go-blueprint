@@ -10,9 +10,10 @@ import (
 )
 
 // Authorizer resolves permissions against the principal's selected organization.
-type Authorizer struct { organizations organization.Repository }
+type PermissionRepository interface { Permissions(context.Context, organization.ID, platformauth.UserID) ([]platformauthorization.Permission, error) }
+type Authorizer struct { organizations PermissionRepository }
 
-func New(organizations organization.Repository) *Authorizer { return &Authorizer{organizations: organizations} }
+func New(organizations PermissionRepository) *Authorizer { return &Authorizer{organizations: organizations} }
 
 func (a *Authorizer) Authorize(ctx context.Context, principal platformauth.Principal, permission platformauthorization.Permission, resource platformauthorization.Resource) error {
 	if principal.UserID == "" || principal.OrganizationID == "" { return platformerrors.New(platformerrors.Unauthenticated, "authentication_required", "Authentication is required") }

@@ -1,0 +1,25 @@
+package application
+
+import (
+	"context"
+
+	"{{.Module}}/backend/internal/features/audit/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type Service struct {
+	repo  domain.Repository
+	authz authorization.Authorizer
+}
+
+func New(repo domain.Repository, authz authorization.Authorizer) *Service {
+	return &Service{repo: repo, authz: authz}
+}
+func (s *Service) List(ctx context.Context, p auth.Principal, page pagination.Request) (pagination.Page[domain.Event], error) {
+	if err := s.authz.Authorize(ctx, p, domain.PermissionView, authorization.Resource{Kind: "audit_event", OrganizationID: p.OrganizationID}); err != nil {
+		return pagination.Page[domain.Event]{}, err
+	}
+	return s.repo.List(ctx, domain.Filter{OrganizationID: string(p.OrganizationID), Page: page})
+}

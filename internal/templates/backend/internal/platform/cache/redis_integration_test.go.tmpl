@@ -1,0 +1,21 @@
+package cache
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+)
+
+func TestRedisStoreIntegration(t *testing.T) {
+	url := os.Getenv("REDIS_URL")
+	if url == "" { t.Skip("REDIS_URL is not configured") }
+	store, err := NewRedisStore(url)
+	if err != nil { t.Fatal(err) }
+	defer store.Close()
+	key := "cache-integration-test"
+	defer store.Delete(context.Background(), key)
+	if err := store.Set(context.Background(), key, []byte("value"), time.Minute); err != nil { t.Fatal(err) }
+	got, found, err := store.Get(context.Background(), key)
+	if err != nil || !found || string(got) != "value" { t.Fatalf("Get() = %q, %t, %v", got, found, err) }
+}

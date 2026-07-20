@@ -5,6 +5,18 @@ on: [pull_request, push]
 jobs:
   verify:
     runs-on: ubuntu-latest
+{{if .Cache}}    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379/0
+{{end}}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -17,4 +29,41 @@ jobs:
         run: go mod tidy && go test ./...
 {{if .Frontend}}      - working-directory: frontend
         run: pnpm install && pnpm typecheck && pnpm test && pnpm build
+{{end}}
+{{if .Jobs}}
+  rabbitmq:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: {POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: app}
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:4-management-alpine
+        env: {RABBITMQ_DEFAULT_USER: app, RABBITMQ_DEFAULT_PASS: app}
+        ports: [5672:5672]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://app:app@localhost:5432/app?sslmode=disable
+      QUEUE_DRIVER: rabbitmq
+      RABBITMQ_URL: amqp://app:app@localhost:5672/
+      CURSOR_SECRET: ci-cursor-secret-with-more-than-32-bytes
+{{if .Auth}}      JWT_SECRET: ci-jwt-secret-with-more-than-32-bytes
+{{end}}    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - working-directory: backend
+        run: go mod tidy && go tool sqlc generate && go run ./cmd/migrate up
+      - working-directory: backend
+        run: timeout 5s go run ./cmd/scheduler || test $? -eq 124
 {{end}}

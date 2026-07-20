@@ -1,0 +1,155 @@
+package jobs
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/rabbitmq/amqp091-go"
+)
+
+const (
+	rabbitExchange = "blueprint.jobs"
+	rabbitQueue = "blueprint.jobs"
+	rabbitDelayQueue = "blueprint.jobs.delayed"
+	rabbitDeadQueue = "blueprint.jobs.dead"
+)
+
+// RabbitStore is a durable AMQP adapter. A delivery stays unacknowledged until
+// Complete or Fail, so a crashed worker is redelivered by RabbitMQ. Delayed
+// jobs use a TTL queue which dead-letters them into the work queue; no broker
+// plugin is required.
+type RabbitStore struct {
+	db *sql.DB
+	conn *amqp091.Connection
+	ch *amqp091.Channel
+	mu sync.Mutex
+	inflight map[ID]amqp091.Delivery
+}
+
+type rabbitEnvelope struct { ID string `json:"id"`; Job Job `json:"job"`; Attempts uint16 `json:"attempts"`; RunAt time.Time `json:"runAt"` }
+
+func NewRabbitStore(ctx context.Context, url string, db *sql.DB) (*RabbitStore, error) {
+	if url == "" { return nil, fmt.Errorf("rabbitmq URL is required") }
+	if db == nil { return nil, fmt.Errorf("database is required for RabbitMQ idempotency") }
+	conn, err := amqp091.DialConfig(url, amqp091.Config{Heartbeat: 10 * time.Second})
+	if err != nil { return nil, fmt.Errorf("dial rabbitmq: %w", err) }
+	store := &RabbitStore{db: db, conn: conn, inflight: map[ID]amqp091.Delivery{}}
+	if store.ch, err = conn.Channel(); err != nil { _ = conn.Close(); return nil, fmt.Errorf("open rabbitmq channel: %w", err) }
+	if err := store.declare(); err != nil { _ = store.ch.Close(); _ = conn.Close(); return nil, err }
+	if err := ctx.Err(); err != nil { _ = store.Close(); return nil, err }
+	return store, nil
+}
+
+func (s *RabbitStore) declare() error {
+	if err := s.ch.ExchangeDeclare(rabbitExchange, "direct", true, false, false, false, nil); err != nil { return fmt.Errorf("declare jobs exchange: %w", err) }
+	if _, err := s.ch.QueueDeclare(rabbitQueue, true, false, false, false, nil); err != nil { return fmt.Errorf("declare jobs queue: %w", err) }
+	if err := s.ch.QueueBind(rabbitQueue, rabbitQueue, rabbitExchange, false, nil); err != nil { return fmt.Errorf("bind jobs queue: %w", err) }
+	delayArgs := amqp091.Table{"x-dead-letter-exchange": rabbitExchange, "x-dead-letter-routing-key": rabbitQueue}
+	if _, err := s.ch.QueueDeclare(rabbitDelayQueue, true, false, false, false, delayArgs); err != nil { return fmt.Errorf("declare delayed jobs queue: %w", err) }
+	if _, err := s.ch.QueueDeclare(rabbitDeadQueue, true, false, false, false, nil); err != nil { return fmt.Errorf("declare dead-letter queue: %w", err) }
+	if err := s.ch.QueueBind(rabbitDeadQueue, rabbitDeadQueue, rabbitExchange, false, nil); err != nil { return fmt.Errorf("bind dead-letter queue: %w", err) }
+	return nil
+}
+
+func (s *RabbitStore) Enqueue(ctx context.Context, job Job) (ID, error) { return s.EnqueueAt(ctx, job, time.Now().UTC()) }
+func (s *RabbitStore) EnqueueAt(ctx context.Context, job Job, at time.Time) (ID, error) {
+	if job.Name == "" { return "", fmt.Errorf("job name is required") }
+	if job.MaxAttempts == 0 { job.MaxAttempts = 1 }
+	id, created, err := s.reserve(ctx, job.IdempotencyKey, ID(uuid.NewString()))
+	if err != nil { return "", err }
+	if !created { return id, nil }
+	if err := s.publish(ctx, rabbitEnvelope{ID: string(id), Job: job, RunAt: at.UTC()}); err != nil {
+		_ = s.releaseReservation(ctx, job.IdempotencyKey, id)
+		return "", err
+	}
+	return id, nil
+}
+
+// reserve atomically creates (or reads) an idempotency key before publishing.
+// The row is durable across API/worker restarts, so concurrent producers get
+// the exact same job ID and only the producer that inserted it publishes.
+func (s *RabbitStore) reserve(ctx context.Context, key string, candidate ID) (ID, bool, error) {
+	if key == "" { return candidate, true, nil }
+	if len(key) > 255 { return "", false, fmt.Errorf("job idempotency key exceeds 255 characters") }
+	value, err := rabbitDBID(candidate); if err != nil { return "", false, err }
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return "", false, fmt.Errorf("begin rabbitmq idempotency reservation: %w", err) }
+	defer tx.Rollback() //nolint:errcheck
+	result, err := tx.ExecContext(ctx, "INSERT INTO rabbit_job_idempotency_keys (idempotency_key, job_id) VALUES ({{if eq .Database "postgres"}}$1, $2{{else}}?, ?{{end}}) {{if eq .Database "postgres"}}ON CONFLICT (idempotency_key) DO NOTHING{{else}}ON DUPLICATE KEY UPDATE job_id = job_id{{end}}", key, value)
+	if err != nil { return "", false, fmt.Errorf("reserve rabbitmq idempotency key: %w", err) }
+	inserted, err := result.RowsAffected(); if err != nil { return "", false, fmt.Errorf("read rabbitmq idempotency result: %w", err) }
+	if inserted > 0 { if err := tx.Commit(); err != nil { return "", false, fmt.Errorf("commit rabbitmq idempotency reservation: %w", err) }; return candidate, true, nil }
+	var existing any
+	if err := tx.QueryRowContext(ctx, "SELECT job_id FROM rabbit_job_idempotency_keys WHERE idempotency_key = {{if eq .Database "postgres"}}$1{{else}}?{{end}}", key).Scan(&existing); err != nil { return "", false, fmt.Errorf("read rabbitmq idempotency key: %w", err) }
+	if err := tx.Commit(); err != nil { return "", false, fmt.Errorf("commit rabbitmq idempotency read: %w", err) }
+	id, err := rabbitIDFrom(existing); if err != nil { return "", false, err }
+	return id, false, nil
+}
+
+func (s *RabbitStore) releaseReservation(ctx context.Context, key string, id ID) error {
+	if key == "" { return nil }
+	value, err := rabbitDBID(id); if err != nil { return err }
+	_, err = s.db.ExecContext(ctx, "DELETE FROM rabbit_job_idempotency_keys WHERE idempotency_key = {{if eq .Database "postgres"}}$1{{else}}?{{end}} AND job_id = {{if eq .Database "postgres"}}$2{{else}}?{{end}}", key, value)
+	return err
+}
+
+func (s *RabbitStore) publish(ctx context.Context, envelope rabbitEnvelope) error {
+	body, err := json.Marshal(envelope); if err != nil { return fmt.Errorf("encode job: %w", err) }
+	routingKey, expiration := rabbitQueue, ""
+	if delay := time.Until(envelope.RunAt); delay > 0 { routingKey, expiration = rabbitDelayQueue, strconv.FormatInt(delay.Milliseconds(), 10) }
+	s.mu.Lock(); defer s.mu.Unlock()
+	return s.ch.PublishWithContext(ctx, rabbitExchange, routingKey, false, false, amqp091.Publishing{DeliveryMode: amqp091.Persistent, ContentType: "application/json", Body: body, Expiration: expiration, Headers: amqp091.Table{"x-blueprint-idempotency-key": envelope.Job.IdempotencyKey}})
+}
+
+func (s *RabbitStore) Claim(ctx context.Context, now time.Time, lease time.Duration) (ClaimedJob, bool, error) {
+	s.mu.Lock(); defer s.mu.Unlock()
+	delivery, ok, err := s.ch.Get(rabbitQueue, false)
+	if err != nil { return ClaimedJob{}, false, fmt.Errorf("get rabbitmq job: %w", err) }
+	if !ok { return ClaimedJob{}, false, nil }
+	var envelope rabbitEnvelope
+	if err := json.Unmarshal(delivery.Body, &envelope); err != nil { _ = delivery.Reject(false); return ClaimedJob{}, false, fmt.Errorf("decode rabbitmq job: %w", err) }
+	id := ID(envelope.ID); if id == "" { _ = delivery.Reject(false); return ClaimedJob{}, false, fmt.Errorf("rabbitmq job has no id") }
+	envelope.Attempts++
+	s.inflight[id] = delivery
+	return ClaimedJob{ID: id, Job: envelope.Job, Attempts: envelope.Attempts, LeaseUntil: now.Add(lease)}, true, nil
+}
+func (s *RabbitStore) Complete(_ context.Context, id ID) error {
+	s.mu.Lock(); defer s.mu.Unlock(); delivery, ok := s.inflight[id]; if !ok { return fmt.Errorf("job %q is not running", id) }; delete(s.inflight, id); return delivery.Ack(false)
+}
+func (s *RabbitStore) Fail(ctx context.Context, id ID, now time.Time, cause error) error {
+	s.mu.Lock(); delivery, ok := s.inflight[id]; if ok { delete(s.inflight, id) }; s.mu.Unlock()
+	if !ok { return fmt.Errorf("job %q is not running", id) }
+	var envelope rabbitEnvelope
+	if err := json.Unmarshal(delivery.Body, &envelope); err != nil { return delivery.Reject(false) }
+	envelope.Attempts++
+	if envelope.Attempts >= envelope.Job.MaxAttempts {
+		body, err := json.Marshal(envelope); if err == nil { s.mu.Lock(); err = s.ch.PublishWithContext(ctx, rabbitExchange, rabbitDeadQueue, false, false, amqp091.Publishing{DeliveryMode: amqp091.Persistent, ContentType: "application/json", Body: body, Headers: amqp091.Table{"x-blueprint-error": cause.Error()}}); s.mu.Unlock() }; if err != nil { return fmt.Errorf("dead-letter job: %w", err) }; return delivery.Ack(false)
+	}
+	envelope.RunAt = now.UTC()
+	if err := s.publish(ctx, envelope); err != nil { return fmt.Errorf("retry job: %w", err) }
+	return delivery.Ack(false)
+}
+
+func (s *RabbitStore) Snapshot(_ context.Context, _ int) (Snapshot, error) {
+	s.mu.Lock(); defer s.mu.Unlock()
+	ready, err := s.ch.QueueInspect(rabbitQueue); if err != nil { return Snapshot{}, fmt.Errorf("inspect rabbitmq queue: %w", err) }
+	dead, err := s.ch.QueueInspect(rabbitDeadQueue); if err != nil { return Snapshot{}, fmt.Errorf("inspect rabbitmq dead-letter queue: %w", err) }
+	return Snapshot{Counts: map[string]int64{"queued": int64(ready.Messages), "running": int64(ready.Consumers), "dead": int64(dead.Messages)}, Recent: []Record{}}, nil
+}
+func (s *RabbitStore) Close() error { s.mu.Lock(); defer s.mu.Unlock(); if s.ch != nil { _ = s.ch.Close() }; if s.conn != nil { return s.conn.Close() }; return nil }
+
+{{if eq .Database "postgres"}}
+func rabbitDBID(id ID) (uuid.UUID, error) { value, err := uuid.Parse(string(id)); if err != nil { return uuid.UUID{}, fmt.Errorf("parse rabbitmq job id: %w", err) }; return value, nil }
+func rabbitIDFrom(value any) (ID, error) { switch id := value.(type) { case uuid.UUID: return ID(id.String()), nil; case string: parsed, err := uuid.Parse(id); if err != nil { return "", fmt.Errorf("parse rabbitmq job id: %w", err) }; return ID(parsed.String()), nil; case []byte: parsed, err := uuid.FromBytes(id); if err != nil { return "", fmt.Errorf("decode rabbitmq job id: %w", err) }; return ID(parsed.String()), nil; default: return "", fmt.Errorf("unsupported rabbitmq job id type %T", value) } }
+{{else}}
+func rabbitDBID(id ID) ([]byte, error) { value, err := uuid.Parse(string(id)); if err != nil { return nil, fmt.Errorf("parse rabbitmq job id: %w", err) }; return value[:], nil }
+func rabbitIDFrom(value any) (ID, error) { switch id := value.(type) { case []byte: parsed, err := uuid.FromBytes(id); if err != nil { return "", fmt.Errorf("decode rabbitmq job id: %w", err) }; return ID(parsed.String()), nil; case string: parsed, err := uuid.Parse(id); if err != nil { return "", fmt.Errorf("parse rabbitmq job id: %w", err) }; return ID(parsed.String()), nil; default: return "", fmt.Errorf("unsupported rabbitmq job id type %T", value) } }
+{{end}}
+
+var _ Store = (*RabbitStore)(nil)
+var _ Inspector = (*RabbitStore)(nil)

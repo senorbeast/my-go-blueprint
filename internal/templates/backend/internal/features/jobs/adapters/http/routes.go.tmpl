@@ -1,0 +1,29 @@
+package http
+
+import (
+	"context"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/jobs"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+)
+
+type Routes struct { queue jobs.Inspector }
+func New(queue jobs.Inspector) Routes { return Routes{queue: queue} }
+func (Routes) Descriptor() httpplatform.Descriptor { permission := authorization.Permission("platform.admin"); return httpplatform.Descriptor{Prefix: "/api/v1/operations", Tags: []string{"Operations"}, Authentication: httpplatform.Required, Permission: &permission} }
+type snapshotInput struct { Limit int `query:"limit" minimum:"1" maximum:"100" default:"25"` }
+type snapshotOutput struct { Body snapshotBody }
+type snapshotBody struct { Counts map[string]int64 `json:"counts"`; Recent []jobBody `json:"recent"`; Workers []workerBody `json:"workers"`; Cron []cronBody `json:"cron"` }
+type jobBody struct { ID string `json:"id"`; Name string `json:"name"`; State string `json:"state"`; RunAt string `json:"runAt"`; Attempts uint16 `json:"attempts"`; MaxAttempts uint16 `json:"maxAttempts"`; LeaseUntil string `json:"leaseUntil,omitempty"`; CreatedAt string `json:"createdAt"` }
+type workerBody struct { Name string `json:"name"`; Handler string `json:"handler"`; PollInterval string `json:"pollInterval"`; Lease string `json:"lease"` }
+type cronBody struct { Name string `json:"name"`; Schedule string `json:"schedule"`; Enqueues string `json:"enqueues"` }
+func (r Routes) Register(reg httpplatform.Registrar) error { httpplatform.Register(reg, huma.Operation{OperationID: "operations-snapshot", Method: "GET", Path: "/api/v1/operations/jobs", Tags: []string{"Operations"}}, r.snapshot); return nil }
+func (r Routes) snapshot(ctx context.Context, input *snapshotInput) (*snapshotOutput, error) {
+	snapshot, err := r.queue.Snapshot(ctx, input.Limit); if err != nil { return nil, err }
+	body := snapshotBody{Counts: snapshot.Counts, Recent: make([]jobBody, 0, len(snapshot.Recent)), Workers: []workerBody{ {Name: "default", Handler: "{{if .Email}}email.send, {{end}}demo.heartbeat", PollInterval: "1s", Lease: "30s"} }, Cron: []cronBody{}}
+	{{if .Cron}}body.Cron = append(body.Cron, cronBody{Name: "Demo heartbeat", Schedule: "Every minute", Enqueues: "demo.heartbeat"}){{end}}
+	for _, record := range snapshot.Recent { item := jobBody{ID: record.ID, Name: record.Name, State: record.State, RunAt: record.RunAt.UTC().Format(time.RFC3339), Attempts: record.Attempts, MaxAttempts: record.MaxAttempts, CreatedAt: record.CreatedAt.UTC().Format(time.RFC3339)}; if record.LeaseUntil != nil { item.LeaseUntil = record.LeaseUntil.UTC().Format(time.RFC3339) }; body.Recent = append(body.Recent, item) }
+	return &snapshotOutput{Body: body}, nil
+}

@@ -1,0 +1,38 @@
+package domain
+
+import (
+	"context"
+	"time"
+
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+// ObjectStore is implemented by an S3-compatible adapter. The adapter receives server-created
+// opaque keys only; callers never receive cloud credentials.
+type ObjectStore interface {
+	PresignPut(context.Context, PutRequest) (PresignedURL, error)
+	PresignGet(context.Context, GetRequest) (PresignedURL, error)
+	Delete(context.Context, string) error
+}
+
+type PutRequest struct {
+	Key, ContentType, ChecksumSHA256 string
+	SizeBytes                        int64
+	ExpiresAt                        time.Time
+}
+type GetRequest struct {
+	Key       string
+	ExpiresAt time.Time
+}
+type PresignedURL struct {
+	URL       string
+	Headers   map[string]string
+	ExpiresAt time.Time
+}
+
+type Repository interface {
+	Create(context.Context, File) error
+	Find(context.Context, OrganizationID, ID) (File, error)
+	List(context.Context, OrganizationID, pagination.Request) (pagination.Page[File], error)
+	Delete(context.Context, OrganizationID, ID) error
+}

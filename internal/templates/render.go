@@ -27,8 +27,14 @@ type templateData struct {
 	RBAC        bool
 	Jobs        bool
 	Cron        bool
-	CMS         bool
-	CRM         bool
+	Content     bool
+	Customers   bool
+	Sales       bool
+	Workspace   bool
+	Audit       bool
+	Files       bool
+	Email       bool
+	Cache       bool
 	Frontend    bool
 }
 
@@ -43,8 +49,14 @@ func (Renderer) Render(config spec.Config) (map[string][]byte, error) {
 		RBAC:        config.Has(spec.FeatureRBAC),
 		Jobs:        config.Has(spec.FeatureJobs),
 		Cron:        config.Has(spec.FeatureCron),
-		CMS:         config.Has(spec.FeatureCMS),
-		CRM:         config.Has(spec.FeatureCRM),
+		Content:     config.Has(spec.FeatureContent),
+		Customers:   config.Has(spec.FeatureCustomers),
+		Sales:       config.Has(spec.FeatureSales),
+		Workspace:   config.Has(spec.FeatureWorkspace),
+		Audit:       config.Has(spec.FeatureAudit),
+		Files:       config.Has(spec.FeatureFiles),
+		Email:       config.Has(spec.FeatureEmail),
+		Cache:       config.Has(spec.FeatureCache),
 		Frontend:    config.Frontend,
 	}
 	files := make(map[string][]byte)
@@ -107,10 +119,22 @@ func includeFeatureAsset(root, relative string, config spec.Config) bool {
 			return config.Has(spec.FeatureAuth)
 		}
 		if strings.HasPrefix(relative, "src/features/cms/") {
-			return config.Has(spec.FeatureCMS)
+			return config.Has(spec.FeatureContent)
 		}
 		if strings.HasPrefix(relative, "src/features/crm/") {
-			return config.Has(spec.FeatureCRM)
+			return config.Has(spec.FeatureCustomers) || config.Has(spec.FeatureSales)
+		}
+		if strings.HasPrefix(relative, "src/features/organizations/") {
+			return config.Has(spec.FeatureWorkspace)
+		}
+		if strings.HasPrefix(relative, "src/features/audit/") {
+			return config.Has(spec.FeatureAudit)
+		}
+		if strings.HasPrefix(relative, "src/features/files/") {
+			return config.Has(spec.FeatureFiles)
+		}
+		if strings.HasPrefix(relative, "src/features/operations/") {
+			return config.Has(spec.FeatureJobs)
 		}
 		return true
 	}
@@ -121,13 +145,28 @@ func includeFeatureAsset(root, relative string, config spec.Config) bool {
 		return config.Has(spec.FeatureAuth)
 	}
 	if strings.HasPrefix(relative, "internal/features/cms/") {
-		return config.Has(spec.FeatureCMS)
+		return config.Has(spec.FeatureContent)
+	}
+	if strings.HasPrefix(relative, "internal/features/audit/") {
+		return config.Has(spec.FeatureAudit)
+	}
+	if strings.HasPrefix(relative, "internal/features/files/") {
+		return config.Has(spec.FeatureFiles)
+	}
+	if strings.HasPrefix(relative, "internal/features/email/") {
+		return config.Has(spec.FeatureEmail)
+	}
+	if strings.HasPrefix(relative, "internal/features/jobs/") {
+		return config.Has(spec.FeatureJobs)
 	}
 	if strings.HasPrefix(relative, "internal/features/jobs/") || strings.HasPrefix(relative, "internal/platform/jobs/") {
 		return config.Has(spec.FeatureJobs)
 	}
+	if strings.HasPrefix(relative, "internal/platform/cache/") {
+		return config.Has(spec.FeatureCache)
+	}
 	if strings.HasPrefix(relative, "internal/features/crm/") {
-		return config.Has(spec.FeatureCRM)
+		return config.Has(spec.FeatureCustomers) || config.Has(spec.FeatureSales)
 	}
 	if strings.HasPrefix(relative, "cmd/worker/") {
 		return config.Has(spec.FeatureJobs)
@@ -139,16 +178,16 @@ func includeFeatureAsset(root, relative string, config spec.Config) bool {
 	switch {
 	case strings.HasPrefix(base, "00001_"), strings.HasPrefix(base, "00002_"), strings.HasPrefix(base, "00003_"):
 		return config.Has(spec.FeatureAuth)
-	case strings.HasPrefix(base, "00004_"):
+	case strings.HasPrefix(base, "00004_"), strings.HasPrefix(base, "00014_"):
 		return config.Has(spec.FeatureJobs)
 	case strings.HasPrefix(base, "00006_"), strings.HasPrefix(base, "00007_"), strings.HasPrefix(base, "00008_"), strings.HasPrefix(base, "00009_"):
 		return config.Has(spec.FeatureRBAC)
 	case strings.HasPrefix(base, "00010_"), strings.HasPrefix(base, "00011_"), strings.HasPrefix(base, "00012_"), strings.HasPrefix(base, "00013_"):
 		return config.Has(spec.FeatureAuth)
 	case strings.HasPrefix(base, "0002"):
-		return config.Has(spec.FeatureCMS)
+		return config.Has(spec.FeatureContent)
 	case strings.HasPrefix(base, "0003"):
-		return config.Has(spec.FeatureCRM)
+		return config.Has(spec.FeatureCustomers)
 	default:
 		return true
 	}

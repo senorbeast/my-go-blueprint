@@ -1,0 +1,36 @@
+package config
+
+{{if and .Auth .RBAC}}
+import (
+	"strings"
+	"testing"
+)
+
+func setRequiredEnvironment(t *testing.T) {
+	t.Helper()
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("CURSOR_SECRET", strings.Repeat("c", 32))
+	t.Setenv("JWT_SECRET", strings.Repeat("j", 32))
+	// Keep owner-bootstrap tests independent of the optional local Redis cache.
+	t.Setenv("CACHE_DRIVER", "memory")
+	t.Setenv("CACHE_URL", "")
+}
+
+func TestLoadRejectsPartialOwnerBootstrap(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("BOOTSTRAP_OWNER_EMAIL", "owner@example.test")
+	t.Setenv("BOOTSTRAP_OWNER_PASSWORD", "")
+	t.Setenv("BOOTSTRAP_OWNER_ORGANIZATION_NAME", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "must be set together") { t.Fatalf("Load() partial bootstrap error = %v", err) }
+}
+
+func TestLoadAcceptsCompleteOwnerBootstrap(t *testing.T) {
+	setRequiredEnvironment(t)
+	t.Setenv("BOOTSTRAP_OWNER_EMAIL", "owner@example.test")
+	t.Setenv("BOOTSTRAP_OWNER_PASSWORD", "sufficiently-long-password")
+	t.Setenv("BOOTSTRAP_OWNER_ORGANIZATION_NAME", "Acme")
+	config, err := Load()
+	if err != nil { t.Fatalf("Load() error = %v", err) }
+	if !config.OwnerBootstrap.Enabled() || config.OwnerBootstrap.Email != "owner@example.test" { t.Fatalf("unexpected bootstrap configuration: %#v", config.OwnerBootstrap) }
+}
+{{end}}

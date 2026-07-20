@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 	"github.com/labstack/echo/v4"
@@ -23,28 +24,41 @@ import (
 	userapplication "{{.Module}}/backend/internal/features/users/application"
 	platformauth "{{.Module}}/backend/internal/platform/auth"
 	{{end}}
-	{{if .CMS}}
+	{{if .Content}}
 	cmsrepository "{{.Module}}/backend/internal/features/cms/adapters/repository"
 	cmsapplication "{{.Module}}/backend/internal/features/cms/application"
 	cmshttp "{{.Module}}/backend/internal/features/cms/adapters/http"
 	{{end}}
-	{{if .CRM}}
+	{{if .Customers}}
 	crmrepository "{{.Module}}/backend/internal/features/crm/adapters/repository"
 	crmapplication "{{.Module}}/backend/internal/features/crm/application"
 	crmhttp "{{.Module}}/backend/internal/features/crm/adapters/http"
 	{{end}}
+	{{if and .Auth .Jobs}}
+	jobshttp "{{.Module}}/backend/internal/features/jobs/adapters/http"
+	platformjobs "{{.Module}}/backend/internal/platform/jobs"
+	{{end}}
+	{{if and .Auth .Email}}
+	emailjobs "{{.Module}}/backend/internal/features/email/adapters/jobs"
+	emailapplication "{{.Module}}/backend/internal/features/email/application"
+	emailhttp "{{.Module}}/backend/internal/features/email/adapters/http"
+	{{end}}
 	httpplatform "{{.Module}}/backend/internal/platform/http"
 )
 
-type Application struct { config config.Config; logger *zap.Logger; database *database.DB; limiter ratelimit.Limiter; server *echo.Echo }
+type Application struct { config config.Config; logger *zap.Logger; database *database.DB; queueCloser io.Closer; limiter ratelimit.Limiter; server *echo.Echo }
 
 func New(_ context.Context) (*Application, error) {
+	var queueCloser io.Closer
 	cfg, err := config.Load()
 	if err != nil { return nil, err }
 	logger, err := zap.NewProduction()
 	if err != nil { return nil, err }
 	db, err := database.Open(context.Background(), cfg.DatabaseURL)
 	if err != nil { _ = logger.Sync(); return nil, err }
+	{{if and .Auth .RBAC}}
+	if err := bootstrapOwner(context.Background(), db.SQL(), cfg.OwnerBootstrap); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	{{end}}
 	limiter := ratelimit.NewSQLRollingWindow(db.SQL(), time.Now)
 	e := echo.New()
 	httpplatform.InstallMiddleware(e, logger, cfg)
@@ -63,29 +77,44 @@ func New(_ context.Context) (*Application, error) {
 	organizationStore := organizationrepository.NewSQLStore(db.SQL())
 	organizationRepository := organizationrepository.New(organizationStore)
 	authorizer := organizationauthorization.New(organizationRepository)
-	organizationService := organizationapplication.New(organizationRepository, authorizer, platformauth.Clock{}, platformauth.IDs{})
+	organizationService := organizationapplication.New(organizationRepository, authorizer, platformauth.Clock{}, platformauth.IDs{}, userpassword.NewBcrypt(0))
 	credentials := authapplication.NewCredentials(userService, organizationService, authService, userpassword.NewBcrypt(0))
 	sessionContexts := authapplication.NewSessionContexts(userService, organizationService, organizationRepository)
 	if err := registrar.RegisterModule(authhttp.New(authService, credentials, sessionContexts, authhttp.NewCookies(cfg.CookieSecure))); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
 	if err := registrar.RegisterModule(organizationhttp.New(organizationService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
-	{{if .CMS}}
+	{{if .Content}}
 	cmsStore := cmsrepository.NewSQLStore(db.SQL())
 	cmsService := cmsapplication.New(cmsrepository.New(cmsStore), authorizer, platformauth.IDs{}, platformauth.Clock{})
 	if err := registrar.RegisterModule(cmshttp.New(cmsService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
 	{{end}}
-	{{if .CRM}}
+	{{if .Customers}}
 	crmStore := crmrepository.NewSQLStore(db.SQL())
 	crmService := crmapplication.New(crmrepository.New(crmStore), authorizer, platformauth.IDs{}, platformauth.Clock{})
 	if err := registrar.RegisterModule(crmhttp.New(crmService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
 	{{end}}
+	{{if .Jobs}}
+	queue, err := platformjobs.Open(context.Background(), cfg.QueueDriver, cfg.RabbitMQURL, db.SQL())
+	if err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	if closer, ok := queue.(platformjobs.Closer); ok { queueCloser = closer }
+	if inspector, ok := queue.(platformjobs.Inspector); ok {
+		if err := registrar.RegisterModule(jobshttp.New(inspector)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	}
+	{{end}}
+	{{if .Email}}
+	emailService := emailapplication.New(emailjobs.NewQueue(queue))
+	if err := registrar.RegisterModule(emailhttp.New(emailService)); err != nil { _ = db.Close(); _ = logger.Sync(); return nil, err }
+	{{end}}
 	{{end}}
 	// Construct repositories, services, and feature route adapters here.
-	return &Application{config: cfg, logger: logger, database: db, limiter: limiter, server: e}, nil
+	return &Application{config: cfg, logger: logger, database: db, queueCloser: queueCloser, limiter: limiter, server: e}, nil
 }
 
 func (a *Application) Run(ctx context.Context) error {
 	defer a.logger.Sync() //nolint:errcheck
 	defer a.database.Close() //nolint:errcheck
+	if a.queueCloser != nil {
+		defer a.queueCloser.Close() //nolint:errcheck
+	}
 	go func() { <-ctx.Done(); shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second); defer cancel(); _ = a.server.Shutdown(shutdown) }()
 	err := a.server.Start(a.config.HTTPAddress)
 	if errors.Is(err, http.ErrServerClosed) { return nil }

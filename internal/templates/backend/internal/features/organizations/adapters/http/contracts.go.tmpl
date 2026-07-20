@@ -18,3 +18,20 @@ type AssignRoleInput struct {
 	}
 }
 type AssignRoleOutput struct{}
+type RoleBody struct { ID string `json:"id"`; Name string `json:"name"` }
+type PermissionBody struct { ID string `json:"id"`; Name string `json:"name"`; Description string `json:"description"`; Group string `json:"group"` }
+type MemberBody struct { UserID string `json:"userId"`; Email string `json:"email"`; DisplayName string `json:"displayName"`; Roles []RoleBody `json:"roles"` }
+type ListMembersInput struct { OrganizationID string `path:"organizationID"` }
+type ListMembersOutput struct { Body struct { Members []MemberBody `json:"members"` } }
+type ListRolesInput struct { OrganizationID string `path:"organizationID"` }
+type ListRolesOutput struct { Body struct { Roles []RoleBody `json:"roles"` } }
+type ListPermissionCatalogInput struct { OrganizationID string `path:"organizationID"` }
+type ListPermissionCatalogOutput struct { Body struct { Permissions []PermissionBody `json:"permissions"` } }
+type RolePermissionsInput struct { OrganizationID string `path:"organizationID"`; RoleID string `path:"roleID"` }
+type RolePermissionsOutput struct { Body struct { Permissions []string `json:"permissions"` } }
+type CreateRoleInput struct { OrganizationID string `path:"organizationID"`; Body struct { Name string `json:"name" minLength:"1" maxLength:"80"`; Permissions []string `json:"permissions"` } }
+type CreateRoleOutput struct { Body RoleBody }
+type UpdateRolePermissionsInput struct { OrganizationID string `path:"organizationID"`; RoleID string `path:"roleID"`; Body struct { Permissions []string `json:"permissions"` } }
+type UpdateRolePermissionsOutput struct{}
+type AddMemberInput struct { OrganizationID string `path:"organizationID"`; Body struct { Email string `json:"email" format:"email"`; DisplayName string `json:"displayName" minLength:"1" maxLength:"160"`; Password string `json:"password" minLength:"12" writeOnly:"true"`; RoleID string `json:"roleId"` } }
+type AddMemberOutput struct{}

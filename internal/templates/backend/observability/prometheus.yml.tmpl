@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  # Keeps the local monitoring stack verifiable before application metrics are
+  # enabled. Add the API's /metrics target when instrumenting the application.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

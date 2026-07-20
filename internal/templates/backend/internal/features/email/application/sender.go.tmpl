@@ -1,0 +1,13 @@
+package application
+
+import (
+	"context"
+
+	"{{.Module}}/backend/internal/features/email/domain"
+)
+
+// Sender is the application seam for transactional delivery. The jobs feature
+// owns retries and scheduling; adapters own SMTP or provider-specific calls.
+type Sender interface {
+	Send(context.Context, domain.Message) (deliveryID string, err error)
+}

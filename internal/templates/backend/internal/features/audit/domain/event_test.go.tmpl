@@ -1,0 +1,16 @@
+package domain
+
+import (
+	"testing"
+	"time"
+)
+
+func TestNewEventRequiresTenantScopedActorAndTarget(t *testing.T) {
+	_, err := NewEvent("event-1", "org-1", "user-1", "workspace.member.created", "member", "member-1", nil, time.Now())
+	if err != nil {
+		t.Fatalf("NewEvent() error = %v", err)
+	}
+	if _, err := NewEvent("event-1", "", "user-1", "created", "member", "member-1", nil, time.Now()); err == nil {
+		t.Fatal("NewEvent accepted empty organization")
+	}
+}

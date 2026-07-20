@@ -1,0 +1,18 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"{{.Module}}/backend/internal/features/email/domain"
+	platformjobs "{{.Module}}/backend/internal/platform/jobs"
+)
+
+const DeliveryName platformjobs.Name = "email.send"
+type Queue struct { queue platformjobs.Queue }
+func NewQueue(queue platformjobs.Queue) *Queue { return &Queue{queue: queue} }
+func (q *Queue) Enqueue(ctx context.Context, message domain.Message) (string, error) { payload, err := json.Marshal(message); if err != nil { return "", fmt.Errorf("encode email delivery: %w", err) }; id, err := q.queue.Enqueue(ctx, platformjobs.Job{Name: DeliveryName, Version: 1, Payload: payload, MaxAttempts: 3}); if err != nil { return "", err }; return string(id), nil }
+type Handler struct { sender interface { Send(context.Context, domain.Message) (string, error) } }
+func NewHandler(sender interface { Send(context.Context, domain.Message) (string, error) }) *Handler { return &Handler{sender: sender} }
+func (h *Handler) Handle(ctx context.Context, job platformjobs.Job) error { var message domain.Message; if err := json.Unmarshal(job.Payload, &message); err != nil { return fmt.Errorf("decode email delivery: %w", err) }; if _, err := domain.NewMessage(message.To, message.Subject, message.Text); err != nil { return err }; _, err := h.sender.Send(ctx, message); return err }

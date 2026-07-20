@@ -143,7 +143,7 @@ func TestRenderIncludesOnlySelectedBusinessPack(t *testing.T) {
 	config := spec.DefaultConfig()
 	config.Name = "acme"
 	config.Module = "example.com/acme"
-	config.Features = []spec.Feature{spec.FeatureCMS}
+	config.Features = []spec.Feature{spec.FeatureContent}
 	config, err := spec.Resolve(config)
 	if err != nil {
 		t.Fatal(err)
@@ -153,11 +153,72 @@ func TestRenderIncludesOnlySelectedBusinessPack(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := files["backend/internal/features/cms/feature.go"]; !ok {
-		t.Fatal("CMS feature missing")
+		t.Fatal("content feature missing")
 	}
 	for name := range files {
 		if strings.Contains(name, "/features/crm/") || strings.Contains(name, "00030_crm") {
-			t.Fatalf("CRM file rendered without CRM: %s", name)
+			t.Fatalf("customer file rendered without customers: %s", name)
 		}
+	}
+}
+
+func TestRenderCacheFeatureIncludesOnlyCacheAssets(t *testing.T) {
+	config := spec.DefaultConfig()
+	config.Name = "acme"
+	config.Module = "example.com/acme"
+	config.Features = []spec.Feature{spec.FeatureCache}
+	config, err := spec.Resolve(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := (Renderer{}).Render(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"backend/internal/platform/cache/cache.go",
+		"backend/internal/platform/cache/redis.go",
+		"backend/internal/platform/cache/cache_test.go",
+	} {
+		if _, ok := files[name]; !ok {
+			t.Fatalf("cache asset missing: %s", name)
+		}
+	}
+	config.Features = nil
+	withoutCache, err := (Renderer{}).Render(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range withoutCache {
+		if strings.Contains(name, "/platform/cache/") {
+			t.Fatalf("cache asset rendered without feature: %s", name)
+		}
+	}
+}
+
+func TestRenderObservabilityServicesFollowSelectedFeatures(t *testing.T) {
+	config := spec.DefaultConfig()
+	config.Name = "acme"
+	config.Module = "example.com/acme"
+	config.Features = []spec.Feature{spec.FeatureEmail, spec.FeatureCache}
+	config, err := spec.Resolve(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := (Renderer{}).Render(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose := string(files["backend/docker-compose.yml"])
+	for _, want := range []string{"mailpit:", "redisinsight:", "prometheus:", "grafana:"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("compose missing %q:\n%s", want, compose)
+		}
+	}
+	if !strings.Contains(compose, "rabbitmq:") {
+		t.Fatalf("rabbitmq missing for email's jobs dependency:\n%s", compose)
+	}
+	if !strings.Contains(string(files["Makefile"]), "mailpit") {
+		t.Fatal("email demo must start Mailpit")
 	}
 }

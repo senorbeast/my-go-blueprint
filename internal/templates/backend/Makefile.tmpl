@@ -1,6 +1,7 @@
 .PHONY: sqlc verify
 
 sqlc:
+	go mod tidy
 	go tool sqlc generate
 
 verify: sqlc

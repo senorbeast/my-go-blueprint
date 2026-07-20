@@ -1,0 +1,52 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"{{.Module}}/backend/internal/features/files/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type testRepository struct{ created domain.File }
+func (r *testRepository) Create(_ context.Context, file domain.File) error { r.created = file; return nil }
+func (*testRepository) Find(context.Context, domain.OrganizationID, domain.ID) (domain.File, error) { return domain.File{}, domain.ErrNotFound }
+func (*testRepository) List(context.Context, domain.OrganizationID, pagination.Request) (pagination.Page[domain.File], error) { return pagination.Page[domain.File]{}, nil }
+func (*testRepository) Delete(context.Context, domain.OrganizationID, domain.ID) error { return nil }
+
+type testObjects struct{ put domain.PutRequest }
+func (s *testObjects) PresignPut(_ context.Context, request domain.PutRequest) (domain.PresignedURL, error) { s.put = request; return domain.PresignedURL{URL: "https://storage.example.test/upload", ExpiresAt: request.ExpiresAt}, nil }
+func (*testObjects) PresignGet(context.Context, domain.GetRequest) (domain.PresignedURL, error) { return domain.PresignedURL{}, nil }
+func (*testObjects) Delete(context.Context, string) error { return nil }
+
+type testAuthorizer struct{ err error; permission authorization.Permission }
+func (a *testAuthorizer) Authorize(_ context.Context, _ platformauth.Principal, permission authorization.Permission, _ authorization.Resource) error { a.permission = permission; return a.err }
+type testIDs struct{}
+func (testIDs) New() string { return "file-1" }
+type testClock struct{ now time.Time }
+func (c testClock) Now() time.Time { return c.now }
+
+func TestPrepareUploadUsesServerOwnedObjectKeyAndPresignedURL(t *testing.T) {
+	now := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	repository, objects, authz := &testRepository{}, &testObjects{}, &testAuthorizer{}
+	service := New(repository, objects, authz, testIDs{}, testClock{now})
+	principal := platformauth.Principal{UserID: "user-1", OrganizationID: "org-1"}
+
+	plan, err := service.PrepareUpload(context.Background(), principal, PrepareUpload{OriginalName: " report.pdf ", ContentType: "application/pdf", SizeBytes: 42})
+	if err != nil { t.Fatalf("PrepareUpload() error = %v", err) }
+	if plan.File.ObjectKey != "organizations/org-1/files/file-1" || repository.created.ObjectKey != plan.File.ObjectKey { t.Fatalf("object key = %q", plan.File.ObjectKey) }
+	if objects.put.Key != plan.File.ObjectKey || plan.Upload.URL == "" { t.Fatalf("presign request = %#v, plan = %#v", objects.put, plan) }
+	if authz.permission != domain.PermissionWrite { t.Fatalf("permission = %q", authz.permission) }
+}
+
+func TestPrepareUploadStopsBeforeStorageWhenUnauthorized(t *testing.T) {
+	repository, objects := &testRepository{}, &testObjects{}
+	service := New(repository, objects, &testAuthorizer{err: errors.New("forbidden")}, testIDs{}, testClock{})
+	_, err := service.PrepareUpload(context.Background(), platformauth.Principal{UserID: "user-1", OrganizationID: "org-1"}, PrepareUpload{OriginalName: "report.pdf", ContentType: "application/pdf", SizeBytes: 1})
+	if err == nil { t.Fatal("PrepareUpload accepted an unauthorized request") }
+	if objects.put.Key != "" || repository.created.ID != "" { t.Fatal("PrepareUpload touched storage or persistence before authorization") }
+}

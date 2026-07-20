@@ -17,6 +17,14 @@ func (*permissionRepository) FindMembership(context.Context, organization.ID, pl
 func (*permissionRepository) DefaultOrganization(context.Context, platformauth.UserID) (organization.Organization, error) { return organization.Organization{}, nil }
 func (r *permissionRepository) Permissions(context.Context, organization.ID, platformauth.UserID) ([]platformauthorization.Permission, error) { return r.permissions, nil }
 func (*permissionRepository) AssignRole(context.Context, organization.ID, platformauth.UserID, organization.RoleID) error { return nil }
+func (*permissionRepository) ListMembers(context.Context, organization.ID) ([]organization.Member, error) { return nil, nil }
+func (*permissionRepository) ListRoles(context.Context, organization.ID) ([]organization.Role, error) { return nil, nil }
+func (*permissionRepository) ListPermissionCatalog(context.Context, organization.ID) ([]organization.Permission, error) { return nil, nil }
+func (*permissionRepository) RolePermissions(context.Context, organization.ID, organization.RoleID) ([]platformauthorization.Permission, error) { return nil, nil }
+func (*permissionRepository) CreateRole(context.Context, organization.ID, organization.Role, []platformauthorization.Permission) error { return nil }
+func (*permissionRepository) ReplaceRolePermissions(context.Context, organization.ID, organization.RoleID, []platformauthorization.Permission) error { return nil }
+func (*permissionRepository) AddMemberByEmail(context.Context, organization.ID, string) error { return nil }
+func (*permissionRepository) CreateMember(context.Context, organization.ID, organization.MemberAccount, string, organization.RoleID) error { return nil }
 
 func TestAuthorizerAllowsOwnerAndDeniesTenantEscape(t *testing.T) {
 	authorizer := New(&permissionRepository{permissions: []platformauthorization.Permission{"platform.admin"}})

@@ -1,0 +1,19 @@
+package jobs
+
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+// The database-backed RabbitMQ ledger persists this representation. Keep the
+// conversion under test for both generated SQL dialects so duplicate enqueue
+// calls can always recover the same durable ID.
+func TestRabbitLedgerIDRoundTrip(t *testing.T) {
+	want := ID(uuid.NewString())
+	stored, err := rabbitDBID(want)
+	if err != nil { t.Fatal(err) }
+	got, err := rabbitIDFrom(stored)
+	if err != nil { t.Fatal(err) }
+	if got != want { t.Fatalf("ledger ID = %q, want %q", got, want) }
+}

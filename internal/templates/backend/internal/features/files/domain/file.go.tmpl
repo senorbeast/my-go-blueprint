@@ -1,0 +1,43 @@
+// Package domain defines tenant-scoped file metadata and storage boundaries.
+package domain
+
+import (
+	"errors"
+	"strings"
+	"time"
+)
+
+const (
+	PermissionRead   = "files.read"
+	PermissionWrite  = "files.write"
+	PermissionDelete = "files.delete"
+)
+
+var (
+	ErrNotFound = errors.New("file was not found")
+	ErrInvalid  = errors.New("invalid file metadata")
+)
+
+type ID string
+type OrganizationID string
+
+// File is metadata only. ObjectKey is opaque and is never supplied by a browser client.
+type File struct {
+	ID             ID             `json:"id"`
+	OrganizationID OrganizationID `json:"organizationId"`
+	ObjectKey      string         `json:"-"`
+	OriginalName   string         `json:"originalName"`
+	ContentType    string         `json:"contentType"`
+	SizeBytes      int64          `json:"sizeBytes"`
+	ChecksumSHA256 string         `json:"checksumSha256,omitempty"`
+	CreatedBy      string         `json:"createdBy"`
+	CreatedAt      time.Time      `json:"createdAt"`
+}
+
+func NewMetadata(name, contentType string, size int64) (string, string, error) {
+	name, contentType = strings.TrimSpace(name), strings.TrimSpace(contentType)
+	if name == "" || len(name) > 255 || contentType == "" || len(contentType) > 255 || size < 0 {
+		return "", "", ErrInvalid
+	}
+	return name, contentType, nil
+}

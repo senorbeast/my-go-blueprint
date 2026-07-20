@@ -1,0 +1,33 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { WorkspaceAdmin } from "./workspace-admin";
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+describe("WorkspaceAdmin", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("creates a tenant role and keeps the owner role protected", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path.endsWith("/members")) return json({ members: [{ userId: "owner-1", email: "owner@example.test", displayName: "Demo Owner", roles: [{ id: "owner", name: "owner" }] }] });
+      if (path.endsWith("/permissions")) return json({ permissions: [{ id: "permission-1", name: "organizations.roles.assign", description: "Manage workspace roles", group: "workspace" }] });
+      if (path.endsWith("/roles") && init?.method === "POST") return json({ id: "editor", name: "editor" }, 201);
+      if (path.endsWith("/roles")) return json({ roles: [{ id: "owner", name: "owner" }] });
+      if (path.includes("/roles/owner/permissions")) return json({ permissions: ["platform.admin"] });
+      return json({});
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><WorkspaceAdmin organizationID="org-1" permissions={["platform.admin"]} /></QueryClientProvider>);
+
+    expect(await screen.findByText("Workspace administration")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /owner \(protected\)/i }));
+    expect(await screen.findByText(/owner role is protected/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Role name"), { target: { value: "editor" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/v1/organizations/org-1/roles", expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "editor", permissions: ["organizations.roles.assign"] }) })));
+  });
+});

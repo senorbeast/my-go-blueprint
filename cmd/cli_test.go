@@ -17,7 +17,7 @@ func testCLI() (*CLI, *bytes.Buffer, *bytes.Buffer) {
 func TestCreateFlagsAndVerify(t *testing.T) {
 	cli, out, _ := testCLI()
 	root := filepath.Join(t.TempDir(), "project")
-	err := cli.Run([]string{"create", "--name", "acme", "--module", "example.com/acme", "--database", "mysql", "--seed", "demo", "--no-frontend", "--feature", "cms", "--output", root})
+	err := cli.Run([]string{"create", "--name", "acme", "--module", "example.com/acme", "--database", "mysql", "--seed", "demo", "--no-frontend", "--feature", "content", "--output", root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestAddFeatureDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err := cli.Run([]string{"add", "feature", "cms", "--dir", root, "--dry-run"}); err != nil {
+	if err := cli.Run([]string{"add", "feature", "content", "--dir", root, "--dry-run"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "would write") {
@@ -65,5 +65,28 @@ func TestInteractiveCreateUsesDefaults(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "create: wrote") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestInteractiveCreateDisplaysAndAcceptsFeaturePacks(t *testing.T) {
+	cli, out, _ := testCLI()
+	root := filepath.Join(t.TempDir(), "interactive-business-features")
+	cli.In = strings.NewReader("acme\nexample.com/acme\n\n\n content, customers, sales, workspace \nyes\n" + root + "\n")
+	if err := cli.Run([]string{"create"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "content, customers, sales, audit, files, email") {
+		t.Fatalf("interactive prompt does not list feature packs: %q", out.String())
+	}
+	if err := generator.Verify(root); err != nil {
+		t.Fatalf("generated feature-pack project did not verify: %v", err)
+	}
+}
+
+func TestCreateRejectsLegacyFeatureNames(t *testing.T) {
+	cli, _, _ := testCLI()
+	err := cli.Run([]string{"create", "--name", "acme", "--module", "example.com/acme", "--feature", "crm", "--output", t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "customers") {
+		t.Fatalf("legacy CRM error = %v", err)
 	}
 }

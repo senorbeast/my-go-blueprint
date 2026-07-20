@@ -1,0 +1,12 @@
+package application_test
+
+import (
+	"testing"
+
+	"{{.Module}}/backend/internal/features/email/domain"
+)
+
+func TestMessageRejectsMissingRequiredFields(t *testing.T) {
+	if _, err := domain.NewMessage("", "subject", "body"); err == nil { t.Fatal("NewMessage accepted missing recipient") }
+	if _, err := domain.NewMessage("owner@example.test", "", "body"); err == nil { t.Fatal("NewMessage accepted missing subject") }
+}

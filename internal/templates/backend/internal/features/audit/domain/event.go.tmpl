@@ -1,0 +1,40 @@
+// Package domain holds append-only, tenant-scoped audit events.
+package domain
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+const PermissionView = "audit.view"
+
+type Event struct {
+	ID, OrganizationID, ActorID, Action, TargetKind, TargetID string
+	Metadata                                                  map[string]string
+	OccurredAt                                                time.Time
+}
+type Filter struct {
+	OrganizationID string
+	Page           pagination.Request
+}
+
+// Recorder is injected into mutation services. Implementations must append events and never alter prior records.
+type Recorder interface {
+	Record(context.Context, Event) error
+}
+type Repository interface {
+	Recorder
+	List(context.Context, Filter) (pagination.Page[Event], error)
+}
+
+func NewEvent(id, organizationID, actorID, action, targetKind, targetID string, metadata map[string]string, occurredAt time.Time) (Event, error) {
+	for _, value := range []string{id, organizationID, actorID, action, targetKind, targetID} {
+		if strings.TrimSpace(value) == "" {
+			return Event{}, ErrInvalidEvent
+		}
+	}
+	return Event{ID: id, OrganizationID: organizationID, ActorID: actorID, Action: action, TargetKind: targetKind, TargetID: targetID, Metadata: metadata, OccurredAt: occurredAt}, nil
+}

@@ -10,9 +10,9 @@ sql:
       {{if .Auth}}- "internal/features/users/queries"
       - "internal/features/auth/queries"
       - "internal/features/organizations/queries"
-      {{end}}{{if .CMS}}- "internal/features/cms/queries"
+      {{end}}{{if .Content}}- "internal/features/cms/queries"
       {{end}}{{if .Jobs}}- "internal/features/jobs/queries"
-      {{end}}{{if .CRM}}- "internal/features/crm/queries"
+      {{end}}{{if .Customers}}- "internal/features/crm/queries"
       {{end}}
     gen:
       go:

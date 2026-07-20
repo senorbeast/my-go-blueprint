@@ -19,7 +19,7 @@ func TestPullRequestScenariosAreValidAndCoverOptions(t *testing.T) {
 			covered[feature] = true
 		}
 	}
-	for _, option := range []string{"postgres", "mysql", "auth", "rbac", "jobs", "cron", "cms", "crm"} {
+	for _, option := range []string{"postgres", "mysql", "auth", "rbac", "workspace", "jobs", "cron", "content", "customers", "sales", "audit", "files", "email"} {
 		if !covered[option] {
 			t.Errorf("option %q has no PR scenario", option)
 		}
@@ -78,8 +78,8 @@ func TestNightlyScenariosCoverEveryValidOptionPair(t *testing.T) {
 
 func TestResolvedFeatureGraphsEnumerateEveryValidCombination(t *testing.T) {
 	graphs := ResolvedFeatureGraphs()
-	if len(graphs) != 18 {
-		t.Fatalf("got %d valid feature graphs, want 18", len(graphs))
+	if len(graphs) != 45 {
+		t.Fatalf("got %d valid feature graphs, want 45", len(graphs))
 	}
 	for _, features := range graphs {
 		if err := (Scenario{Name: "graph", Database: "postgres", Seed: "minimal", Features: features}).Validate(); err != nil {

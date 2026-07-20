@@ -1,10 +1,16 @@
-.PHONY: db-up db-down migrate seed backend{{if .Jobs}} worker{{end}}{{if .Cron}} scheduler{{end}}{{if .Frontend}} frontend{{end}} demo verify-generated sqlc
+.PHONY: db-up db-down observability-up observability-down migrate seed backend{{if .Jobs}} worker{{end}}{{if .Cron}} scheduler{{end}}{{if .Frontend}} frontend{{end}} demo verify-generated sqlc
 
 db-up:
-	cd backend && docker compose up -d db
+	cd backend && docker compose up -d db{{if .Jobs}} rabbitmq{{end}}{{if .Email}} mailpit{{end}}{{if .Cache}} redis redisinsight{{end}}
 
 db-down:
 	cd backend && docker compose down --volumes --remove-orphans
+
+observability-up:
+	cd backend && docker compose --profile observability up -d prometheus grafana
+
+observability-down:
+	cd backend && docker compose --profile observability stop prometheus grafana
 
 migrate:
 	cd backend && go run ./cmd/migrate up
@@ -47,12 +53,12 @@ demo:
 		export HTTP_ADDRESS DATABASE_URL CORS_ORIGINS; \
 		VITE_PORT=$${VITE_PORT:-5173}; VITE_HOST=$${VITE_HOST:-127.0.0.1}; \
 		VITE_API_PROXY_TARGET=$${VITE_API_PROXY_TARGET:-http://localhost$${HTTP_ADDRESS}}; \
-		cd backend && docker compose up -d --wait db; cd ..; \
+		cd backend && docker compose up -d --wait db{{if .Jobs}} rabbitmq{{end}}{{if .Email}} mailpit{{end}}{{if .Cache}} redis redisinsight{{end}}; cd ..; \
 		(cd backend && go mod tidy); \
 		(cd backend && go tool sqlc generate); \
 		(cd backend && go run ./cmd/migrate up); \
 		(cd backend && go run ./cmd/seed --profile demo); \
-		pids=""; trap '\''kill $$pids 2>/dev/null || true'\'' INT TERM EXIT; \
+		pids=""; stop_demo() { for pid in $$pids; do pkill -TERM -P "$$pid" 2>/dev/null || true; kill "$$pid" 2>/dev/null || true; done; }; trap '\''stop_demo'\'' INT TERM EXIT; \
 		(cd backend && go run ./cmd/api) & pids="$$pids $$!"; \
 {{if .Jobs}}		(cd backend && go run ./cmd/worker) & pids="$$pids $$!"; \
 {{end}}{{if .Cron}}		(cd backend && go run ./cmd/scheduler) & pids="$$pids $$!"; \

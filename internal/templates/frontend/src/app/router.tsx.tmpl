@@ -1,30 +1,45 @@
 import { createRootRoute, createRoute, createRouter, Link, Outlet } from "@tanstack/react-router";
 {{if .Auth}}
 import { AuthShell, SessionHydrator } from "@/features/auth/auth-shell";
-{{end}}{{if or .CMS .CRM}}import { hasPermission, useAuthUI } from "@/features/auth/auth-store";
-{{end}}{{if .CMS}}
+{{end}}{{if or .Content .Customers .Workspace}}import { hasPermission, useAuthUI } from "@/features/auth/auth-store";
+{{end}}{{if .Content}}
 import { CMSAdmin } from "@/features/cms/cms-admin";
-{{end}}{{if .CRM}}
+{{end}}{{if .Customers}}
 import { CRMAdmin } from "@/features/crm/crm-admin";
 {{end}}
+{{if .Workspace}}
+import { WorkspaceAdmin } from "@/features/organizations/workspace-admin";
+{{end}}
+{{if .Jobs}}
+import { OperationsConsole } from "@/features/operations/operations-console";
+{{end}}
 
-{{if .CMS}}function CMSPage() {
+{{if .Content}}function CMSPage() {
   const organizationId = useAuthUI((state) => state.activeOrganizationId);
   const permissions = useAuthUI((state) => state.permissions);
   if (!organizationId) return <main className="p-8">Select an organization to manage content.</main>;
   return <CMSAdmin organizationId={organizationId} canCreate={hasPermission(permissions, "cms.posts.create")} canPublish={hasPermission(permissions, "cms.posts.publish")} />;
 }
-{{end}}{{if .CRM}}function CRMPage() {
+{{end}}{{if .Customers}}function CRMPage() {
   const organizationID = useAuthUI((state) => state.activeOrganizationId);
   const permissions = useAuthUI((state) => state.permissions);
   if (!organizationID) return <main className="p-8">Select an organization to open CRM.</main>;
   return <CRMAdmin organizationID={organizationID} permissions={permissions} />;
 }
 {{end}}
+{{if .Workspace}}function WorkspacePage() {
+  const organizationID = useAuthUI((state) => state.activeOrganizationId);
+  const permissions = useAuthUI((state) => state.permissions);
+  if (!organizationID) return <main className="p-8">Select an organization to manage its members.</main>;
+  return <WorkspaceAdmin organizationID={organizationID} permissions={permissions} />;
+}
+{{end}}
+{{if .Jobs}}function OperationsPage() { return <OperationsConsole />; }
+{{end}}
 
 function AppHeader() {
-  {{if or .CMS .CRM}}const permissions = useAuthUI((state) => state.permissions);
-  {{end}}return <header className="border-b bg-card"><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-6 px-4 sm:px-6"><Link to="/" className="font-semibold tracking-tight">{{ .Name }}</Link><nav aria-label="Primary navigation" className="flex items-center gap-1 text-sm text-muted-foreground">{{if .CMS}}{hasPermission(permissions, "cms.posts.view") && <Link to="/cms" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Content</Link>}{{end}}{{if .CRM}}{hasPermission(permissions, "crm.companies.view") && <Link to="/crm" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">CRM</Link>}{{end}}</nav></div></header>;
+  {{if or .Content .Customers .Workspace}}const permissions = useAuthUI((state) => state.permissions);
+  {{end}}return <header className="border-b bg-card"><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-6 px-4 sm:px-6"><Link to="/" className="font-semibold tracking-tight">{{ .Name }}</Link><nav aria-label="Primary navigation" className="flex items-center gap-1 text-sm text-muted-foreground">{{if .Content}}{hasPermission(permissions, "cms.posts.view") && <Link to="/cms" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Content</Link>}{{end}}{{if .Customers}}{hasPermission(permissions, "crm.companies.view") && <Link to="/crm" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Customers</Link>}{{end}}{{if .Workspace}}{hasPermission(permissions, "organizations.roles.assign") && <Link to="/workspace" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Workspace</Link>}{{end}}{{if .Jobs}}<Link to="/operations" className="rounded-md px-3 py-2 hover:bg-accent hover:text-accent-foreground">Operations</Link>{{end}}</nav></div></header>;
 }
 
 const rootRoute = createRootRoute({ component: () => <><SessionHydrator /><AppHeader /><Outlet /></> });
@@ -32,11 +47,15 @@ const rootRoute = createRootRoute({ component: () => <><SessionHydrator /><AppHe
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: AuthShell });
 {{else}}
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => <main className="p-8"><h1 className="text-2xl font-semibold">{{.Name}}</h1><p className="mt-2 text-slate-600">Backend is ready. Add a feature to begin.</p></main> });
-{{end}}{{if .CMS}}
+{{end}}{{if .Content}}
 const cmsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/cms", component: CMSPage });
-{{end}}{{if .CRM}}
+{{end}}{{if .Customers}}
 const crmRoute = createRoute({ getParentRoute: () => rootRoute, path: "/crm", component: CRMPage });
 {{end}}
-const routeTree = rootRoute.addChildren([indexRoute{{if .CMS}}, cmsRoute{{end}}{{if .CRM}}, crmRoute{{end}}]);
+{{if .Workspace}}
+const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/workspace", component: WorkspacePage });
+{{end}}
+{{if .Jobs}}const operationsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/operations", component: OperationsPage });
+{{end}}const routeTree = rootRoute.addChildren([indexRoute{{if .Content}}, cmsRoute{{end}}{{if .Customers}}, crmRoute{{end}}{{if .Workspace}}, workspaceRoute{{end}}{{if .Jobs}}, operationsRoute{{end}}]);
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 declare module "@tanstack/react-router" { interface Register { router: typeof router } }

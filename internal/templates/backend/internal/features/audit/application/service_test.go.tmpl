@@ -1,0 +1,36 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"{{.Module}}/backend/internal/features/audit/domain"
+	platformauth "{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type testRepository struct{ filter domain.Filter }
+func (*testRepository) Record(context.Context, domain.Event) error { return nil }
+func (r *testRepository) List(_ context.Context, filter domain.Filter) (pagination.Page[domain.Event], error) { r.filter = filter; return pagination.Page[domain.Event]{}, nil }
+
+type testAuthorizer struct{ err error; permission authorization.Permission; resource authorization.Resource }
+func (a *testAuthorizer) Authorize(_ context.Context, _ platformauth.Principal, permission authorization.Permission, resource authorization.Resource) error { a.permission, a.resource = permission, resource; return a.err }
+
+func TestListScopesAuditEventsToTheAuthenticatedOrganization(t *testing.T) {
+	repository, authz := &testRepository{}, &testAuthorizer{}
+	service := New(repository, authz)
+	principal := platformauth.Principal{UserID: "user-1", OrganizationID: "org-1"}
+	if _, err := service.List(context.Background(), principal, pagination.Request{}); err != nil { t.Fatalf("List() error = %v", err) }
+	if repository.filter.OrganizationID != "org-1" || authz.resource.OrganizationID != "org-1" { t.Fatalf("tenant scope = %#v, resource = %#v", repository.filter, authz.resource) }
+	if authz.permission != domain.PermissionView { t.Fatalf("permission = %q", authz.permission) }
+}
+
+func TestListDoesNotReadEventsWhenUnauthorized(t *testing.T) {
+	repository := &testRepository{}
+	service := New(repository, &testAuthorizer{err: errors.New("forbidden")})
+	_, err := service.List(context.Background(), platformauth.Principal{UserID: "user-1", OrganizationID: "org-1"}, pagination.Request{})
+	if err == nil { t.Fatal("List accepted an unauthorized request") }
+	if repository.filter.OrganizationID != "" { t.Fatal("List queried audit events before authorization") }
+}

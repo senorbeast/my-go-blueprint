@@ -1,0 +1,11 @@
+import { useState } from "react";
+
+export type FileRecord = { id: string; originalName: string; contentType: string; sizeBytes: number; createdAt: string };
+
+// UploadFile receives a presigned URL from the generated API and sends bytes directly to object storage.
+// It deliberately never accepts storage-provider credentials in the browser.
+export function FilesPanel({ files, uploadFile }: { files: FileRecord[]; uploadFile: (file: File, progress: (percent: number) => void) => Promise<void> }) {
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return <section aria-label="Files"><h2>Files</h2><input aria-label="Choose a file" type="file" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; setError(null); setProgress(0); try { await uploadFile(file, setProgress); } catch { setError("Upload failed. Please try again."); } finally { setProgress(null); } }} />{progress !== null && <p>Uploading: {progress}%</p>}{error && <p role="alert">{error}</p>}<ul>{files.map(file => <li key={file.id}>{file.originalName} ({file.contentType}, {file.sizeBytes} bytes)</li>)}</ul></section>;
+}

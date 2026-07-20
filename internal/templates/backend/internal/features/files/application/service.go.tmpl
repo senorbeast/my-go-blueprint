@@ -1,0 +1,90 @@
+package application
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.Module}}/backend/internal/features/files/domain"
+	"{{.Module}}/backend/internal/platform/auth"
+	"{{.Module}}/backend/internal/platform/authorization"
+	"{{.Module}}/backend/internal/platform/pagination"
+)
+
+type IDGenerator interface{ New() string }
+type Clock interface{ Now() time.Time }
+
+type Service struct {
+	repo      domain.Repository
+	objects   domain.ObjectStore
+	authz     authorization.Authorizer
+	ids       IDGenerator
+	clock     Clock
+	uploadTTL time.Duration
+}
+
+func New(repo domain.Repository, objects domain.ObjectStore, authz authorization.Authorizer, ids IDGenerator, clock Clock) *Service {
+	return &Service{repo: repo, objects: objects, authz: authz, ids: ids, clock: clock, uploadTTL: 10 * time.Minute}
+}
+
+type PrepareUpload struct {
+	OriginalName, ContentType, ChecksumSHA256 string
+	SizeBytes                                 int64
+}
+type UploadPlan struct {
+	File   domain.File         `json:"file"`
+	Upload domain.PresignedURL `json:"upload"`
+}
+
+func (s *Service) PrepareUpload(ctx context.Context, p auth.Principal, input PrepareUpload) (UploadPlan, error) {
+	if err := s.authorize(ctx, p, domain.PermissionWrite); err != nil {
+		return UploadPlan{}, err
+	}
+	name, contentType, err := domain.NewMetadata(input.OriginalName, input.ContentType, input.SizeBytes)
+	if err != nil {
+		return UploadPlan{}, err
+	}
+	now, id := s.clock.Now(), domain.ID(s.ids.New())
+	file := domain.File{ID: id, OrganizationID: domain.OrganizationID(p.OrganizationID), ObjectKey: fmt.Sprintf("organizations/%s/files/%s", p.OrganizationID, id), OriginalName: name, ContentType: contentType, SizeBytes: input.SizeBytes, ChecksumSHA256: input.ChecksumSHA256, CreatedBy: string(p.UserID), CreatedAt: now}
+	url, err := s.objects.PresignPut(ctx, domain.PutRequest{Key: file.ObjectKey, ContentType: file.ContentType, ChecksumSHA256: file.ChecksumSHA256, SizeBytes: file.SizeBytes, ExpiresAt: now.Add(s.uploadTTL)})
+	if err != nil {
+		return UploadPlan{}, err
+	}
+	if err := s.repo.Create(ctx, file); err != nil {
+		return UploadPlan{}, err
+	}
+	return UploadPlan{File: file, Upload: url}, nil
+}
+
+func (s *Service) Download(ctx context.Context, p auth.Principal, id domain.ID) (domain.PresignedURL, error) {
+	if err := s.authorize(ctx, p, domain.PermissionRead); err != nil {
+		return domain.PresignedURL{}, err
+	}
+	file, err := s.repo.Find(ctx, domain.OrganizationID(p.OrganizationID), id)
+	if err != nil {
+		return domain.PresignedURL{}, err
+	}
+	return s.objects.PresignGet(ctx, domain.GetRequest{Key: file.ObjectKey, ExpiresAt: s.clock.Now().Add(s.uploadTTL)})
+}
+func (s *Service) List(ctx context.Context, p auth.Principal, page pagination.Request) (pagination.Page[domain.File], error) {
+	if err := s.authorize(ctx, p, domain.PermissionRead); err != nil {
+		return pagination.Page[domain.File]{}, err
+	}
+	return s.repo.List(ctx, domain.OrganizationID(p.OrganizationID), page)
+}
+func (s *Service) Delete(ctx context.Context, p auth.Principal, id domain.ID) error {
+	if err := s.authorize(ctx, p, domain.PermissionDelete); err != nil {
+		return err
+	}
+	file, err := s.repo.Find(ctx, domain.OrganizationID(p.OrganizationID), id)
+	if err != nil {
+		return err
+	}
+	if err = s.objects.Delete(ctx, file.ObjectKey); err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, domain.OrganizationID(p.OrganizationID), id)
+}
+func (s *Service) authorize(ctx context.Context, p auth.Principal, permission string) error {
+	return s.authz.Authorize(ctx, p, authorization.Permission(permission), authorization.Resource{Kind: "file", OrganizationID: p.OrganizationID})
+}

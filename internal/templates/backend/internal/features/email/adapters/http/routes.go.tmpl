@@ -1,0 +1,21 @@
+package http
+
+import (
+	"context"
+	"errors"
+
+	"github.com/danielgtaylor/huma/v2"
+	"{{.Module}}/backend/internal/features/email/application"
+	"{{.Module}}/backend/internal/features/email/domain"
+	"{{.Module}}/backend/internal/platform/authorization"
+	platformerrors "{{.Module}}/backend/internal/platform/errors"
+	httpplatform "{{.Module}}/backend/internal/platform/http"
+)
+
+type Routes struct { service *application.Service }
+func New(service *application.Service) Routes { return Routes{service: service} }
+func (Routes) Descriptor() httpplatform.Descriptor { permission := authorization.Permission("platform.admin"); return httpplatform.Descriptor{Prefix: "/api/v1/email", Tags: []string{"Email"}, Authentication: httpplatform.Required, Permission: &permission} }
+type sendInput struct { Body struct { To string `json:"to" format:"email" maxLength:"320"`; Subject string `json:"subject" minLength:"1" maxLength:"200"`; Text string `json:"text" minLength:"1" maxLength:"20000"` } }
+type sendOutput struct { Body struct { JobID string `json:"jobId"` } }
+func (r Routes) Register(reg httpplatform.Registrar) error { httpplatform.Register(reg, huma.Operation{OperationID: "queue-email", Method: "POST", Path: "/api/v1/email/messages", Tags: []string{"Email"}}, r.send); return nil }
+func (r Routes) send(ctx context.Context, input *sendInput) (*sendOutput, error) { id, err := r.service.Request(ctx, input.Body.To, input.Body.Subject, input.Body.Text); if err != nil { if errors.Is(err, domain.ErrInvalidMessage) { return nil, platformerrors.New(platformerrors.Validation, "invalid_email", "A recipient, subject, and message are required") }; return nil, err }; output := &sendOutput{}; output.Body.JobID = id; return output, nil }

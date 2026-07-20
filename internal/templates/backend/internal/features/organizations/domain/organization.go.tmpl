@@ -11,6 +11,10 @@ import (
 )
 
 var ErrInvalidName = errors.New("organization name is required")
+var ErrInvalidMember = errors.New("member email, display name, and password are required")
+var ErrInvalidRole = errors.New("role name is required")
+var ErrProtectedRole = errors.New("the owner role and platform.admin permission are reserved")
+var ErrRoleNotFound = errors.New("organization role was not found")
 
 type ID = platformauth.OrganizationID
 type RoleID string
@@ -36,6 +40,20 @@ type Membership struct {
 	Active         bool
 	CreatedAt      time.Time
 }
+// Member is the workspace-administration projection. It intentionally
+// contains no credential material; it is safe to return from an HTTP list.
+type Member struct {
+	Membership
+	Email       string
+	DisplayName string
+	Roles       []Role
+}
+type MemberAccount struct {
+	UserID      platformauth.UserID
+	Email       string
+	DisplayName string
+	CreatedAt   time.Time
+}
 type Role struct {
 	ID             RoleID
 	OrganizationID ID
@@ -44,6 +62,8 @@ type Role struct {
 type Permission struct {
 	ID   PermissionID
 	Name authorization.Permission
+	Description string
+	Group string
 }
 
 type Repository interface {
@@ -51,5 +71,13 @@ type Repository interface {
 	FindMembership(context.Context, ID, platformauth.UserID) (Membership, error)
 	DefaultOrganization(context.Context, platformauth.UserID) (Organization, error)
 	Permissions(context.Context, ID, platformauth.UserID) ([]authorization.Permission, error)
+	ListMembers(context.Context, ID) ([]Member, error)
+	ListRoles(context.Context, ID) ([]Role, error)
+	ListPermissionCatalog(context.Context, ID) ([]Permission, error)
+	RolePermissions(context.Context, ID, RoleID) ([]authorization.Permission, error)
+	CreateRole(context.Context, ID, Role, []authorization.Permission) error
+	ReplaceRolePermissions(context.Context, ID, RoleID, []authorization.Permission) error
+	AddMemberByEmail(context.Context, ID, string) error
+	CreateMember(context.Context, ID, MemberAccount, string, RoleID) error
 	AssignRole(context.Context, ID, platformauth.UserID, RoleID) error
 }

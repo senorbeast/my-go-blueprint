@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -35,8 +36,44 @@ type Store interface {
 	Complete(context.Context, ID) error
 	Fail(context.Context, ID, time.Time, error) error
 }
+// Inspector exposes only safe queue metadata. It intentionally keeps broker
+// administration out of application HTTP routes.
+type Inspector interface { Snapshot(context.Context, int) (Snapshot, error) }
+// Closer is implemented by network-backed queue drivers.
+type Closer interface { Close() error }
+
+// Open selects the generated queue driver. SQL remains the compatible default;
+// RabbitMQ is opt-in through QUEUE_DRIVER and keeps the Queue/Store contract
+// used by application services and workers unchanged.
+func Open(ctx context.Context, driver, rabbitURL string, db *sql.DB) (Store, error) {
+	switch driver {
+	case "", "sql":
+		return NewSQLStore(db), nil
+	case "rabbitmq":
+		return NewRabbitStore(ctx, rabbitURL, db)
+	default:
+		return nil, fmt.Errorf("unsupported queue driver %q", driver)
+	}
+}
 type Handler interface {
 	Handle(context.Context, Job) error
+}
+
+// Snapshot makes the durable queue observable without exposing its storage
+// implementation to HTTP or feature code.
+type Snapshot struct {
+	Counts map[string]int64
+	Recent []Record
+}
+type Record struct {
+	ID string
+	Name string
+	State string
+	RunAt time.Time
+	Attempts uint16
+	MaxAttempts uint16
+	LeaseUntil *time.Time
+	CreatedAt time.Time
 }
 
 type Registry struct {

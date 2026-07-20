@@ -142,7 +142,7 @@ func (cli *CLI) createInteractive() error {
 	for index, feature := range defaults.Features {
 		featureDefault[index] = string(feature)
 	}
-	featureText, err := read("Features (comma-separated)", strings.Join(featureDefault, ","))
+	featureText, err := read("Features (comma-separated: auth, rbac, workspace, jobs, cron, content, customers, sales, audit, files, email, cache)", strings.Join(featureDefault, ","))
 	if err != nil {
 		return err
 	}

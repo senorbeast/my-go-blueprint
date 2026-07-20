@@ -1,0 +1,6 @@
+export type AuditEvent = { id: string; actorId: string; action: string; targetKind: string; targetId: string; occurredAt: string };
+
+// This presentation component only renders audit events supplied by the authorized generated API.
+export function AuditLog({ events }: { events: AuditEvent[] }) {
+  return <section aria-label="Audit log"><h2>Audit log</h2><ol>{events.map(event => <li key={event.id}><time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString()}</time>: {event.actorId} {event.action} {event.targetKind} {event.targetId}</li>)}</ol></section>;
+}

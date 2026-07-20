@@ -25,19 +25,30 @@ const (
 type Feature string
 
 const (
-	FeatureAuth Feature = "auth"
-	FeatureRBAC Feature = "rbac"
-	FeatureJobs Feature = "jobs"
-	FeatureCron Feature = "cron"
-	FeatureCMS  Feature = "cms"
-	FeatureCRM  Feature = "crm"
+	FeatureAuth      Feature = "auth"
+	FeatureRBAC      Feature = "rbac"
+	FeatureJobs      Feature = "jobs"
+	FeatureCron      Feature = "cron"
+	FeatureContent   Feature = "content"
+	FeatureCustomers Feature = "customers"
+	FeatureSales     Feature = "sales"
+	FeatureWorkspace Feature = "workspace"
+	FeatureAudit     Feature = "audit"
+	FeatureFiles     Feature = "files"
+	FeatureEmail     Feature = "email"
+	FeatureCache     Feature = "cache"
 )
 
 var featureDependencies = map[Feature][]Feature{
-	FeatureRBAC: {FeatureAuth},
-	FeatureCron: {FeatureJobs},
-	FeatureCMS:  {FeatureAuth, FeatureRBAC},
-	FeatureCRM:  {FeatureAuth, FeatureRBAC},
+	FeatureRBAC:      {FeatureAuth},
+	FeatureCron:      {FeatureJobs},
+	FeatureContent:   {FeatureAuth, FeatureRBAC},
+	FeatureCustomers: {FeatureAuth, FeatureRBAC},
+	FeatureSales:     {FeatureCustomers},
+	FeatureWorkspace: {FeatureAuth, FeatureRBAC},
+	FeatureAudit:     {FeatureAuth, FeatureRBAC},
+	FeatureFiles:     {FeatureAuth, FeatureRBAC},
+	FeatureEmail:     {FeatureJobs},
 }
 
 var featureOrder = []Feature{
@@ -45,8 +56,14 @@ var featureOrder = []Feature{
 	FeatureRBAC,
 	FeatureJobs,
 	FeatureCron,
-	FeatureCMS,
-	FeatureCRM,
+	FeatureContent,
+	FeatureCustomers,
+	FeatureSales,
+	FeatureWorkspace,
+	FeatureAudit,
+	FeatureFiles,
+	FeatureEmail,
+	FeatureCache,
 }
 
 type Config struct {
@@ -67,7 +84,7 @@ func DefaultConfig() Config {
 		Seed:     SeedMinimal,
 		Frontend: true,
 		Docker:   true,
-		Features: []Feature{FeatureAuth, FeatureRBAC, FeatureJobs, FeatureCron},
+		Features: []Feature{FeatureAuth, FeatureRBAC, FeatureWorkspace, FeatureJobs, FeatureCron},
 	}
 }
 
@@ -88,6 +105,9 @@ func Resolve(input Config) (Config, error) {
 	selected := make(map[Feature]bool, len(input.Features))
 	var include func(Feature) error
 	include = func(feature Feature) error {
+		if feature == "cms" || feature == "crm" {
+			return fmt.Errorf("legacy feature %q is no longer supported; use %s", feature, legacyFeatureReplacement(feature))
+		}
 		if !slices.Contains(featureOrder, feature) {
 			return fmt.Errorf("unsupported feature %q", feature)
 		}
@@ -121,9 +141,22 @@ func (config Config) Has(feature Feature) bool {
 	return slices.Contains(config.Features, feature)
 }
 
-func (config Config) Auth() bool { return config.Has(FeatureAuth) }
-func (config Config) RBAC() bool { return config.Has(FeatureRBAC) }
-func (config Config) Jobs() bool { return config.Has(FeatureJobs) }
-func (config Config) Cron() bool { return config.Has(FeatureCron) }
-func (config Config) CMS() bool  { return config.Has(FeatureCMS) }
-func (config Config) CRM() bool  { return config.Has(FeatureCRM) }
+func (config Config) Auth() bool      { return config.Has(FeatureAuth) }
+func (config Config) RBAC() bool      { return config.Has(FeatureRBAC) }
+func (config Config) Jobs() bool      { return config.Has(FeatureJobs) }
+func (config Config) Cron() bool      { return config.Has(FeatureCron) }
+func (config Config) Content() bool   { return config.Has(FeatureContent) }
+func (config Config) Customers() bool { return config.Has(FeatureCustomers) }
+func (config Config) Sales() bool     { return config.Has(FeatureSales) }
+func (config Config) Workspace() bool { return config.Has(FeatureWorkspace) }
+func (config Config) Audit() bool     { return config.Has(FeatureAudit) }
+func (config Config) Files() bool     { return config.Has(FeatureFiles) }
+func (config Config) Email() bool     { return config.Has(FeatureEmail) }
+func (config Config) Cache() bool     { return config.Has(FeatureCache) }
+
+func legacyFeatureReplacement(feature Feature) string {
+	if feature == "cms" {
+		return `"content"`
+	}
+	return `"customers" and, when deals and activities are needed, "sales"`
+}

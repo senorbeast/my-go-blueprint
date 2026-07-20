@@ -97,6 +97,9 @@ func (g *Generator) AddFeature(root string, feature spec.Feature, dryRun bool) (
 	if err != nil {
 		return Result{}, err
 	}
+	if err := validateManifestVersion(manifest); err != nil {
+		return Result{}, err
+	}
 	if manifest.Config.Has(feature) {
 		return Result{Config: manifest.Config, DryRun: dryRun}, nil
 	}
@@ -158,13 +161,23 @@ func Verify(root string) error {
 	if err != nil {
 		return err
 	}
-	if manifest.Version != spec.ManifestVersion {
-		return fmt.Errorf("unsupported manifest version %d", manifest.Version)
+	if err := validateManifestVersion(manifest); err != nil {
+		return err
 	}
 	if _, err := spec.Resolve(manifest.Config); err != nil {
 		return fmt.Errorf("invalid manifest config: %w", err)
 	}
 	return verifyManaged(root, manifest)
+}
+
+func validateManifestVersion(manifest spec.Manifest) error {
+	if manifest.Version == spec.ManifestVersion {
+		return nil
+	}
+	if manifest.Version < spec.ManifestVersion {
+		return fmt.Errorf("manifest version %d uses retired feature vocabulary; regenerate the project with content/customers/sales/workspace (cms → content; crm → customers plus sales as needed)", manifest.Version)
+	}
+	return fmt.Errorf("unsupported manifest version %d", manifest.Version)
 }
 
 func Doctor(root string) []error {

@@ -33,4 +33,45 @@ describe("CRMAdmin", () => {
     expect(await screen.findByText("Acme")).toBeInTheDocument();
     expect(fetch).toHaveBeenLastCalledWith("/api/v1/organizations/org-1/crm/companies", expect.objectContaining({ method: "POST" }));
   });
+
+  it("creates a contact with an optional email address", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "contact-1", organizationID: "org-1", name: "Ada", email: "ada@example.test", createdAt: "2026-07-17T00:00:00Z" }), { status: 200 }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><CRMAdmin organizationID="org-1" permissions={["crm.contacts.view", "crm.contacts.create"]} /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Contacts" }));
+    expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Contact name"), { target: { value: "Ada" } });
+    fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "ada@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add contact" }));
+
+    expect(await screen.findByText("ada@example.test")).toBeInTheDocument();
+    expect(fetch).toHaveBeenLastCalledWith("/api/v1/organizations/org-1/crm/contacts", expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Ada", email: "ada@example.test" }) }));
+  });
+
+  it("shows the pipeline creation form only with create permission", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><CRMAdmin organizationID="org-1" permissions={["crm.pipelines.view"]} /></QueryClientProvider>);
+
+    expect(await screen.findByText("No pipelines yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add pipeline" })).not.toBeInTheDocument();
+  });
+
+  it("creates a pipeline through the CRM pipeline endpoint", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], hasMore: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "pipeline-1", organizationID: "org-1", name: "Sales", createdAt: "2026-07-17T00:00:00Z" }), { status: 200 }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><CRMAdmin organizationID="org-1" permissions={["crm.pipelines.view", "crm.pipelines.create"]} /></QueryClientProvider>);
+
+    expect(await screen.findByText("No pipelines yet.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Pipeline name"), { target: { value: "Sales" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add pipeline" }));
+
+    expect(await screen.findByText("Sales")).toBeInTheDocument();
+    expect(fetch).toHaveBeenLastCalledWith("/api/v1/organizations/org-1/crm/pipelines", expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Sales" }) }));
+  });
 });

@@ -6,6 +6,8 @@ The generated stack targets Echo, Huma/OpenAPI, sqlc, Goose, PostgreSQL or MySQL
 
 See [the progress ledger](./docs/plans/IMPLEMENTATION-PROGRESS.md), [architecture plan](./docs/plans/001-clean-feature-module-architecture.md), and [behavioral-testing plan](./docs/plans/002-generated-project-behavioral-testing.md).
 
+See the [feature catalog](./docs/FEATURES.md) for pack descriptions, dependencies, owner bootstrap, and customer/user boundaries.
+
 ## Create a project
 
 Interactive:
@@ -17,7 +19,7 @@ go run . create
 Non-interactive full stack:
 
 ```powershell
-go run . create --name acme --module example.com/acme --database postgres --seed demo --feature cms --feature crm --feature jobs --feature cron
+go run . create --name acme --module example.com/acme --database postgres --seed demo --feature workspace --feature content --feature sales --feature jobs --feature cron
 ```
 
 Backend-only MySQL project:
@@ -29,7 +31,7 @@ go run . create --name acme-api --module example.com/acme-api --database mysql -
 The CLI resolves feature dependencies, writes `.blueprint/manifest.json`, supports `--dry-run`, and protects customized files during later additions:
 
 ```powershell
-go run . add feature cms --dir ./acme
+go run . add feature content --dir ./acme
 go run . verify --dir ./acme
 go run . doctor --dir ./acme
 ```

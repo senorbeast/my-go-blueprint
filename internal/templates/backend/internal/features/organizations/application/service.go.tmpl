@@ -2,6 +2,9 @@ package application
 
 import (
 	"context"
+	"errors"
+	"net/mail"
+	"strings"
 	"time"
 
 	"{{.Module}}/backend/internal/features/organizations/domain"
@@ -11,15 +14,17 @@ import (
 
 type Clock interface{ Now() time.Time }
 type IDGenerator interface{ New() string }
+type PasswordHasher interface { Hash(context.Context, string) (string, error) }
 type Service struct {
 	repository domain.Repository
 	authorizer authorization.Authorizer
 	clock      Clock
 	ids        IDGenerator
+	passwords  PasswordHasher
 }
 
-func New(repository domain.Repository, authorizer authorization.Authorizer, clock Clock, ids IDGenerator) *Service {
-	return &Service{repository: repository, authorizer: authorizer, clock: clock, ids: ids}
+func New(repository domain.Repository, authorizer authorization.Authorizer, clock Clock, ids IDGenerator, passwords PasswordHasher) *Service {
+	return &Service{repository: repository, authorizer: authorizer, clock: clock, ids: ids, passwords: passwords}
 }
 func (s *Service) Create(ctx context.Context, principal platformauth.Principal, name string) (domain.Organization, error) {
 	organization, err := domain.New(domain.ID(s.ids.New()), name, s.clock.Now())
@@ -38,9 +43,61 @@ func (s *Service) DefaultOrganization(ctx context.Context, userID platformauth.U
 	return s.repository.DefaultOrganization(ctx, userID)
 }
 func (s *Service) Permissions(ctx context.Context, principal platformauth.Principal) ([]authorization.Permission, error) { return s.repository.Permissions(ctx, domain.ID(principal.OrganizationID), principal.UserID) }
+func (s *Service) ListMembers(ctx context.Context, principal platformauth.Principal) ([]domain.Member, error) {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return nil, err }
+	return s.repository.ListMembers(ctx, domain.ID(principal.OrganizationID))
+}
+func (s *Service) ListRoles(ctx context.Context, principal platformauth.Principal) ([]domain.Role, error) {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return nil, err }
+	return s.repository.ListRoles(ctx, domain.ID(principal.OrganizationID))
+}
+func (s *Service) PermissionCatalog(ctx context.Context, principal platformauth.Principal) ([]domain.Permission, error) {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return nil, err }
+	return s.repository.ListPermissionCatalog(ctx, domain.ID(principal.OrganizationID))
+}
+func (s *Service) RolePermissions(ctx context.Context, principal platformauth.Principal, roleID domain.RoleID) ([]authorization.Permission, error) {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return nil, err }
+	return s.repository.RolePermissions(ctx, domain.ID(principal.OrganizationID), roleID)
+}
+func (s *Service) CreateRole(ctx context.Context, principal platformauth.Principal, name string, permissions []authorization.Permission) (domain.Role, error) {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return domain.Role{}, err }
+	name = strings.TrimSpace(name); if name == "" { return domain.Role{}, domain.ErrInvalidRole }; if strings.EqualFold(name, "owner") || includesPlatformAdmin(permissions) { return domain.Role{}, domain.ErrProtectedRole }
+	role := domain.Role{ID: domain.RoleID(s.ids.New()), OrganizationID: domain.ID(principal.OrganizationID), Name: name}
+	if err := s.repository.CreateRole(ctx, domain.ID(principal.OrganizationID), role, permissions); err != nil { return domain.Role{}, err }; return role, nil
+}
+func (s *Service) UpdateRolePermissions(ctx context.Context, principal platformauth.Principal, roleID domain.RoleID, permissions []authorization.Permission) error {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return err }
+	if includesPlatformAdmin(permissions) { return domain.ErrProtectedRole }
+	if err := s.ensureRoleEditable(ctx, domain.ID(principal.OrganizationID), roleID); err != nil { return err }
+	return s.repository.ReplaceRolePermissions(ctx, domain.ID(principal.OrganizationID), roleID, permissions)
+}
+func includesPlatformAdmin(values []authorization.Permission) bool { for _, value := range values { if value == "platform.admin" { return true } }; return false }
+// AddMemberByEmail only adds an already-registered user. Provisioning users
+// and credentials belongs to the users/authentication slice, so this endpoint
+// cannot accidentally create an account without an invitation flow.
+func (s *Service) AddMemberByEmail(ctx context.Context, principal platformauth.Principal, email string) error {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return err }
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" { return domain.ErrInvalidName }
+	return s.repository.AddMemberByEmail(ctx, domain.ID(principal.OrganizationID), email)
+}
+type CreateMember struct { Email, DisplayName, Password string; RoleID domain.RoleID }
+func (s *Service) CreateMember(ctx context.Context, principal platformauth.Principal, command CreateMember) error {
+	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil { return err }
+	email := strings.ToLower(strings.TrimSpace(command.Email)); displayName := strings.TrimSpace(command.DisplayName)
+	if _, err := mail.ParseAddress(email); err != nil || displayName == "" || len(command.Password) < 12 || command.RoleID == "" { return domain.ErrInvalidMember }
+	if s.passwords == nil { return errors.New("member provisioning is unavailable") }
+	if err := s.ensureAssignableRole(ctx, domain.ID(principal.OrganizationID), command.RoleID); err != nil { return err }
+	passwordHash, err := s.passwords.Hash(ctx, command.Password); if err != nil { return err }
+	member := domain.MemberAccount{UserID: platformauth.UserID(s.ids.New()), Email: email, DisplayName: displayName, CreatedAt: s.clock.Now()}
+	return s.repository.CreateMember(ctx, domain.ID(principal.OrganizationID), member, passwordHash, command.RoleID)
+}
 func (s *Service) AssignRole(ctx context.Context, principal platformauth.Principal, userID platformauth.UserID, roleID domain.RoleID) error {
 	if err := s.authorizer.Authorize(ctx, principal, "organizations.roles.assign", authorization.Resource{Kind: "organization", OrganizationID: principal.OrganizationID}); err != nil {
 		return err
 	}
+	if err := s.ensureAssignableRole(ctx, domain.ID(principal.OrganizationID), roleID); err != nil { return err }
 	return s.repository.AssignRole(ctx, principal.OrganizationID, userID, roleID)
 }
+func (s *Service) ensureAssignableRole(ctx context.Context, organizationID domain.ID, roleID domain.RoleID) error { return s.ensureRoleEditable(ctx, organizationID, roleID) }
+func (s *Service) ensureRoleEditable(ctx context.Context, organizationID domain.ID, roleID domain.RoleID) error { roles, err := s.repository.ListRoles(ctx, organizationID); if err != nil { return err }; for _, role := range roles { if role.ID != roleID { continue }; if strings.EqualFold(role.Name, "owner") { return domain.ErrProtectedRole }; return nil }; return domain.ErrRoleNotFound }

@@ -1,0 +1,20 @@
+package log
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"{{.Module}}/backend/internal/features/email/domain"
+)
+
+// Sender is a development-safe adapter: it records recipient and subject but
+// deliberately never logs message bodies or credentials.
+type Sender struct{ logger *log.Logger }
+
+func New(logger *log.Logger) *Sender { return &Sender{logger: logger} }
+
+func (s *Sender) Send(_ context.Context, message domain.Message) (string, error) {
+	if s.logger != nil { s.logger.Printf("email delivery requested recipient=%q subject=%q", message.To, message.Subject) }
+	return fmt.Sprintf("log:%s", message.To), nil
+}

@@ -1,0 +1,10 @@
+-- +goose Up
+-- RabbitMQ has at-least-once delivery but no portable broker-side deduplication.
+-- This ledger allocates one durable job ID for each application idempotency key.
+CREATE TABLE rabbit_job_idempotency_keys(
+  idempotency_key text PRIMARY KEY,
+  job_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- +goose Down
+DROP TABLE rabbit_job_idempotency_keys;

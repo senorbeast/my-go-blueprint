@@ -94,11 +94,57 @@ go run ./cmd/scheduler
 ```
 {{end}}
 
+{{if .Jobs}}## Operations, queue, and email
+
+After signing in, open `http://127.0.0.1:$VITE_PORT/operations` to inspect durable queue counts, recent jobs, worker handler configuration, and selected cron schedules. The page refreshes every five seconds and deliberately does not expose job payloads or email bodies.
+
+{{if .Email}}Use **Queue an email** on that page to enqueue a development email. The worker handles `email.send` and the development log adapter records recipient and subject only; configure a real provider adapter before using this in production.{{end}}
+
+`QUEUE_DRIVER=sql` is the default and stores durable job history in the application database. Set `QUEUE_DRIVER=rabbitmq` to use RabbitMQ while keeping the same application queue API; the generated Compose stack always includes RabbitMQ for job-enabled projects. Its management console is [http://localhost:15672](http://localhost:15672) (development credentials: `app` / `app`). RabbitMQ owns broker-level inspection, dead-letter queues, consumers, and message rates; the in-app page remains a safe, application-oriented summary.
+
+The dashboard reports queue state and what the template is configured to start. RabbitMQ mode reports ready/dead counts but intentionally does not expose message bodies or broker administration. It cannot prove that an operating-system process is alive. For that, keep the `make demo` terminal open or run and watch these processes separately:
+
+```sh
+cd backend
+go run ./cmd/worker
+{{if .Cron}}go run ./cmd/scheduler
+{{end}}
+```
+
+Useful development signals:
+
+- API: structured request logs in the API terminal; health at `/healthz`, readiness at `/readyz`, OpenAPI at `/openapi.json`, and interactive docs at `/docs`.
+- SQL queue: `docker compose logs -f db`, then `docker compose exec db psql -U postgres -d app` (PostgreSQL) or the matching MySQL client to inspect `jobs`.
+- RabbitMQ queue: `docker compose logs -f rabbitmq`; use [RabbitMQ Management](http://localhost:15672) for queues, consumers, dead-letter messages, and throughput.
+- Worker: logs `processed demo heartbeat` and, for email, `email delivery requested`; use these to verify handlers are actually executing.
+- Scheduler: logs each `scheduled demo heartbeat`; the Operations screen lists the same configured schedule.
+
+{{if .Email}}Mailpit is started with `make db-up` and `make demo`; open [Mailpit](http://localhost:8025) to inspect development SMTP deliveries. The generated worker deliberately begins with a safe log adapter, so Mailpit remains empty until an SMTP delivery adapter is selected and configured with `MAILPIT_SMTP_ADDRESS`. This makes the current delivery mode explicit instead of implying that email left the process.
+
+{{end}}The development toolchain is Go, Goose migrations, sqlc query generation, Docker Compose, Air for API reloads, React/Vite, TanStack Router/Query, Tailwind, pnpm, Vitest, and Playwright configuration. `make verify-generated` runs the generated backend tests plus frontend typecheck, unit tests, and production build.
+{{end}}
+
+{{if .Cache}}## Cache and Redis
+
+The optional cache feature defaults to Redis in local development. Start it with `docker compose up -d redis redisinsight`; inspect keys at [RedisInsight](http://localhost:5540). Set `CACHE_DRIVER=memory` to run without Redis (useful for focused tests), or configure `CACHE_URL` and `CACHE_PREFIX` for a shared Redis instance. The generated cache seam deliberately does not cache sessions, role grants, or permissions; feature code must opt in and own invalidation.
+{{end}}
+
+## Optional local metrics dashboards
+
+Start the bundled Prometheus and Grafana profile when you need a local dashboard workspace:
+
+```sh
+make observability-up
+```
+
+Prometheus is at [http://localhost:9090](http://localhost:9090) and Grafana is at [http://localhost:3000](http://localhost:3000) (`app` / `app`). Grafana is provisioned with the Prometheus data source. The profile initially proves the monitoring stack itself; add an application `/metrics` endpoint and target before relying on it for API, worker, or scheduler metrics. RabbitMQ Management, Mailpit, and RedisInsight remain the authoritative development UIs for their respective services.
+
 {{if .Frontend}}## Run the frontend
 
 ```sh
 cd frontend
 pnpm install
+# Start the API first, or set OPENAPI_URL to a reachable OpenAPI document.
 pnpm api:generate
 pnpm dev
 ```
@@ -113,3 +159,4 @@ make verify-generated
 Or run `go test ./...` in `backend`{{if .Frontend}} and `pnpm typecheck && pnpm test && pnpm build` in `frontend`{{end}}.
 
 See [the architecture guide](./docs/architecture.md) and [testing guide](./docs/testing.md).
+See the [feature catalog](./docs/features.md) for selected-pack boundaries, dependencies, and owner bootstrap configuration.

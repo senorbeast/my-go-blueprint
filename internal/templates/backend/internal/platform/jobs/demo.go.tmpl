@@ -1,0 +1,56 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+)
+
+// DemoHeartbeatName is a small, self-contained job used to demonstrate that
+// the scheduler, durable queue, and worker are wired together in a new project.
+const DemoHeartbeatName Name = "demo.heartbeat"
+
+type demoHeartbeatPayload struct {
+	ScheduledAt time.Time `json:"scheduled_at"`
+}
+
+// NewDemoHeartbeat returns a job that is safe to enqueue once per minute. Its
+// idempotency key makes scheduler restarts harmless for the current minute.
+func NewDemoHeartbeat(at time.Time) Job {
+	at = at.UTC().Truncate(time.Minute)
+	payload, _ := json.Marshal(demoHeartbeatPayload{ScheduledAt: at}) // time.Time always marshals.
+	return Job{
+		Name:           DemoHeartbeatName,
+		Version:        1,
+		Payload:        payload,
+		IdempotencyKey: fmt.Sprintf("demo-heartbeat:%s", at.Format(time.RFC3339)),
+		MaxAttempts:    3,
+	}
+}
+
+// DemoHeartbeatHandler performs a visible, side-effect-free unit of work. It
+// intentionally stays in the platform layer so generated domain code remains
+// independent of queue and logging implementations.
+type DemoHeartbeatHandler struct {
+	logger *log.Logger
+}
+
+func NewDemoHeartbeatHandler(logger *log.Logger) *DemoHeartbeatHandler {
+	return &DemoHeartbeatHandler{logger: logger}
+}
+
+func (h *DemoHeartbeatHandler) Handle(_ context.Context, job Job) error {
+	var payload demoHeartbeatPayload
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return fmt.Errorf("decode demo heartbeat payload: %w", err)
+	}
+	if payload.ScheduledAt.IsZero() {
+		return fmt.Errorf("demo heartbeat scheduled_at is required")
+	}
+	if h.logger != nil {
+		h.logger.Printf("processed demo heartbeat scheduled for %s", payload.ScheduledAt.UTC().Format(time.RFC3339))
+	}
+	return nil
+}

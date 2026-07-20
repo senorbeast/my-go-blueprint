@@ -3,6 +3,8 @@
 INSERT INTO users (id,email,display_name,created_at) VALUES ({{if eq .Database "postgres"}}$1,$2,$3,$4{{else}}?,?,?,?{{end}});
 -- name: CreateUserCredential :exec
 INSERT INTO user_credentials (user_id,password_hash,created_at,updated_at) VALUES ({{if eq .Database "postgres"}}$1,$2,$3,$4{{else}}?,?,?,?{{end}});
+-- name: CountUsers :one
+SELECT COUNT(*) FROM users;
 -- name: GetUser :one
 SELECT id,email,display_name,created_at FROM users WHERE id={{if eq .Database "postgres"}}$1{{else}}?{{end}};
 -- name: GetUserCredentialByEmail :one

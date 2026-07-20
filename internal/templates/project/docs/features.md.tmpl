@@ -1,0 +1,20 @@
+# Feature catalog
+
+This project was generated from feature packs. Dependencies are resolved automatically.
+
+| Pack | Purpose | Requires |
+| --- | --- | --- |
+| `workspace` | Members, roles, and organization administration | auth, rbac |
+| `content` | Editorial content and publishing | auth, rbac |
+| `customers` | Companies and contacts | auth, rbac |
+| `sales` | Pipelines, deals, and activities | customers |
+| `audit` | Audit domain and viewer foundation | auth, rbac |
+| `files` | S3-compatible file domain and upload foundation | auth, rbac |
+| `email` | Provider-neutral message domain and development log adapter | jobs |
+| `cache` | Application-owned cache seam with Redis and in-memory adapters | — |
+
+CRM contacts are not login accounts. Workspace administrators create application users and assign roles. The retired `cms` and `crm` feature names are not supported.
+
+## Bootstrap owner
+
+On an empty production database, set `BOOTSTRAP_OWNER_EMAIL`, `BOOTSTRAP_OWNER_PASSWORD`, and `BOOTSTRAP_OWNER_ORGANIZATION_NAME` together to create the first owner with `platform.admin`. Partial configuration fails startup; the bootstrap never overwrites an existing account.

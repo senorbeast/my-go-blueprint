@@ -11,11 +11,19 @@ import (
 	"{{.Module}}/backend/internal/platform/authorization"
 )
 
-type recordingRepository struct { organization domain.Organization; membership domain.Membership; role domain.Role; permission domain.Permission; assignedOrganization domain.ID; assignedUser platformauth.UserID; assignedRole domain.RoleID }
+type recordingRepository struct { organization domain.Organization; membership domain.Membership; role domain.Role; permission domain.Permission; assignedOrganization domain.ID; assignedUser platformauth.UserID; assignedRole domain.RoleID; createdMember domain.MemberAccount; createdMemberRole domain.RoleID }
 func (r *recordingRepository) Create(_ context.Context, organization domain.Organization, membership domain.Membership, role domain.Role, permission domain.Permission) error { r.organization, r.membership, r.role, r.permission = organization, membership, role, permission; return nil }
 func (*recordingRepository) FindMembership(context.Context, domain.ID, platformauth.UserID) (domain.Membership, error) { return domain.Membership{}, nil }
 func (*recordingRepository) DefaultOrganization(context.Context, platformauth.UserID) (domain.Organization, error) { return domain.Organization{}, nil }
 func (*recordingRepository) Permissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error) { return nil, nil }
+func (*recordingRepository) ListMembers(context.Context, domain.ID) ([]domain.Member, error) { return nil, nil }
+func (*recordingRepository) ListRoles(context.Context, domain.ID) ([]domain.Role, error) { return []domain.Role{ {ID: "editor", Name: "editor"} }, nil }
+func (*recordingRepository) ListPermissionCatalog(context.Context, domain.ID) ([]domain.Permission, error) { return nil, nil }
+func (*recordingRepository) RolePermissions(context.Context, domain.ID, domain.RoleID) ([]authorization.Permission, error) { return nil, nil }
+func (*recordingRepository) CreateRole(context.Context, domain.ID, domain.Role, []authorization.Permission) error { return nil }
+func (*recordingRepository) ReplaceRolePermissions(context.Context, domain.ID, domain.RoleID, []authorization.Permission) error { return nil }
+func (*recordingRepository) AddMemberByEmail(context.Context, domain.ID, string) error { return nil }
+func (r *recordingRepository) CreateMember(_ context.Context, _ domain.ID, member domain.MemberAccount, _ string, role domain.RoleID) error { r.createdMember, r.createdMemberRole = member, role; return nil }
 func (r *recordingRepository) AssignRole(_ context.Context, organizationID domain.ID, userID platformauth.UserID, roleID domain.RoleID) error { r.assignedOrganization, r.assignedUser, r.assignedRole = organizationID, userID, roleID; return nil }
 
 type fixedClock struct{ now time.Time }
@@ -27,7 +35,7 @@ func (a *recordingAuthorizer) Authorize(context.Context, platformauth.Principal,
 
 func TestCreateProvisionsOwnerRoleAndPlatformAdmin(t *testing.T) {
 	repository := &recordingRepository{}
-	service := New(repository, &recordingAuthorizer{}, fixedClock{now: time.Unix(100, 0)}, &sequenceIDs{values: []string{"organization", "owner-role", "platform-admin"}})
+	service := New(repository, &recordingAuthorizer{}, fixedClock{now: time.Unix(100, 0)}, &sequenceIDs{values: []string{"organization", "owner-role", "platform-admin"}}, nil)
 	organization, err := service.Create(context.Background(), platformauth.Principal{UserID: "owner"}, "Acme")
 	if err != nil { t.Fatalf("create organization: %v", err) }
 	if organization.ID != "organization" || repository.membership.UserID != "owner" || repository.membership.OrganizationID != organization.ID { t.Fatalf("owner membership = %#v for organization %#v", repository.membership, organization) }
@@ -38,7 +46,7 @@ func TestCreateProvisionsOwnerRoleAndPlatformAdmin(t *testing.T) {
 func TestAssignRoleDelegatesOnlyAfterAuthorization(t *testing.T) {
 	repository := &recordingRepository{}
 	authorizer := &recordingAuthorizer{}
-	service := New(repository, authorizer, fixedClock{}, &sequenceIDs{})
+	service := New(repository, authorizer, fixedClock{}, &sequenceIDs{}, nil)
 	principal := platformauth.Principal{UserID: "owner", OrganizationID: "organization"}
 	if err := service.AssignRole(context.Background(), principal, "member", "editor"); err != nil { t.Fatalf("assign role: %v", err) }
 	if authorizer.calls != 1 || repository.assignedOrganization != "organization" || repository.assignedUser != "member" || repository.assignedRole != "editor" { t.Fatalf("assignment = %#v, authorization calls = %d", repository, authorizer.calls) }

@@ -1,0 +1,16 @@
+package domain
+
+import "testing"
+
+func TestNewMetadata(t *testing.T) {
+	name, contentType, err := NewMetadata(" report.pdf ", " application/pdf ", 42)
+	if err != nil || name != "report.pdf" || contentType != "application/pdf" {
+		t.Fatalf("NewMetadata() = %q, %q, %v", name, contentType, err)
+	}
+}
+
+func TestNewMetadataRejectsInvalidInput(t *testing.T) {
+	if _, _, err := NewMetadata("", "application/pdf", 1); err == nil {
+		t.Fatal("NewMetadata accepted an empty name")
+	}
+}

@@ -1,0 +1,54 @@
+// Package cache defines the small application-owned cache seam. Feature code
+// opts in explicitly so invalidation stays next to the data it owns.
+package cache
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+type Store interface {
+	Get(context.Context, string) ([]byte, bool, error)
+	Set(context.Context, string, []byte, time.Duration) error
+	Delete(context.Context, string) error
+	Close() error
+}
+
+type entry struct { value []byte; expiresAt time.Time }
+
+// MemoryStore is suitable for unit tests and local processes that explicitly
+// select CACHE_DRIVER=memory. It is intentionally process-local.
+type MemoryStore struct { mu sync.Mutex; entries map[string]entry }
+
+func NewMemoryStore() *MemoryStore { return &MemoryStore{entries: make(map[string]entry)} }
+
+func (s *MemoryStore) Get(_ context.Context, key string) ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.entries[key]
+	if !ok { return nil, false, nil }
+	if !value.expiresAt.IsZero() && time.Now().After(value.expiresAt) { delete(s.entries, key); return nil, false, nil }
+	return append([]byte(nil), value.value...), true, nil
+}
+
+func (s *MemoryStore) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expiresAt := time.Time{}
+	if ttl > 0 { expiresAt = time.Now().Add(ttl) }
+	s.entries[key] = entry{value: append([]byte(nil), value...), expiresAt: expiresAt}
+	return nil
+}
+
+func (s *MemoryStore) Delete(_ context.Context, key string) error { s.mu.Lock(); defer s.mu.Unlock(); delete(s.entries, key); return nil }
+func (s *MemoryStore) Close() error { return nil }
+
+type NamespacedStore struct { prefix string; store Store }
+
+func Namespace(store Store, prefix string) *NamespacedStore { return &NamespacedStore{prefix: prefix, store: store} }
+func (s *NamespacedStore) key(key string) string { if s.prefix == "" { return key }; return s.prefix + ":" + key }
+func (s *NamespacedStore) Get(ctx context.Context, key string) ([]byte, bool, error) { return s.store.Get(ctx, s.key(key)) }
+func (s *NamespacedStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error { return s.store.Set(ctx, s.key(key), value, ttl) }
+func (s *NamespacedStore) Delete(ctx context.Context, key string) error { return s.store.Delete(ctx, s.key(key)) }
+func (s *NamespacedStore) Close() error { return s.store.Close() }

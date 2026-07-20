@@ -21,14 +21,50 @@ jobs:
     strategy:
       matrix: {database: [postgres, mysql]}
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: "1.25.x", cache: false}
       - run: go build -o blueprint .
-      - run: ./blueprint create --name full --module example.com/full --output /tmp/full --database ${{ matrix.database }} --no-frontend --seed demo --feature cms --feature crm --feature jobs --feature cron
+      - run: ./blueprint create --name full --module example.com/full --output /tmp/full --database ${{ matrix.database }} --no-frontend --seed demo --feature content --feature customers --feature sales --feature jobs --feature cron --feature cache
       - working-directory: /tmp/full/backend
         run: go mod tidy && go test ./...
+
+  generated-rabbitmq:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: "1.25.x", cache: false}
+      - run: go build -o blueprint .
+      - run: ./blueprint create --name rabbit --module example.com/rabbit --output /tmp/rabbit --database postgres --no-frontend --seed demo --feature jobs --feature cron
+      - name: Start SQL and RabbitMQ services
+        working-directory: /tmp/rabbit/backend
+        run: docker compose up -d --wait db rabbitmq
+      - name: Compile and exercise the RabbitMQ driver configuration
+        working-directory: /tmp/rabbit/backend
+        env:
+          DATABASE_URL: postgres://app:app@127.0.0.1:5432/app?sslmode=disable
+          QUEUE_DRIVER: rabbitmq
+          RABBITMQ_URL: amqp://app:app@127.0.0.1:5672/
+          CURSOR_SECRET: ci-cursor-secret-with-more-than-32-bytes
+          JWT_SECRET: ci-jwt-secret-with-more-than-32-bytes
+        run: go mod tidy && go test ./... && go run ./cmd/migrate up && timeout 5s go run ./cmd/scheduler || test $? -eq 124
+      - name: Clean up
+        if: always()
+        working-directory: /tmp/rabbit/backend
+        run: docker compose down --volumes --remove-orphans
 
   generated-frontend:
     runs-on: ubuntu-latest
@@ -40,6 +76,6 @@ jobs:
         with: {version: 10}
       - uses: actions/setup-node@v4
         with: {node-version: 22}
-      - run: go run . create --name web --module example.com/web --output /tmp/web --database postgres --seed demo --feature cms --feature crm
+      - run: go run . create --name web --module example.com/web --output /tmp/web --database postgres --seed demo --feature content --feature customers --feature sales --feature workspace
       - working-directory: /tmp/web/frontend
         run: pnpm install && pnpm typecheck && pnpm test && pnpm build

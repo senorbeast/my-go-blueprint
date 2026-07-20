@@ -76,6 +76,62 @@ func (s *SQLStore) ListOrganizationsForUser(ctx context.Context, userID platform
 }
 
 {{if .RBAC}}
+func (s *SQLStore) ListMembers(ctx context.Context, organizationID domain.ID) ([]domain.Member, error) {
+	organizationValue, err := idValue(organizationID); if err != nil { return nil, err }
+	rows, err := dbgen.New(s.db).ListOrganizationMembers(ctx, organizationValue)
+	if err != nil { return nil, fmt.Errorf("list organization members: %w", err) }
+	members := make([]domain.Member, 0, len(rows)); byUser := make(map[string]int, len(rows))
+	for _, row := range rows {
+		userID, err := stringID(row.UserID); if err != nil { return nil, err }
+		index, exists := byUser[userID]
+		if !exists { index = len(members); byUser[userID] = index; members = append(members, domain.Member{Membership: domain.Membership{OrganizationID: organizationID, UserID: platformauth.UserID(userID), Active: true}, Email: row.Email, DisplayName: row.DisplayName, Roles: []domain.Role{}}) }
+		if row.RoleID.Valid { {{if eq .Database "mysql"}}roleID, err := stringID([]byte(row.RoleID.String)){{else}}roleID, err := stringID(row.RoleID.UUID){{end}}; if err != nil { return nil, err }; members[index].Roles = append(members[index].Roles, domain.Role{ID: domain.RoleID(roleID), OrganizationID: organizationID, Name: row.RoleName.String}) }
+	}
+	return members, nil
+}
+
+func (s *SQLStore) ListRoles(ctx context.Context, organizationID domain.ID) ([]domain.Role, error) {
+	organizationValue, err := idValue(organizationID); if err != nil { return nil, err }
+	rows, err := dbgen.New(s.db).ListOrganizationRoles(ctx, organizationValue); if err != nil { return nil, fmt.Errorf("list organization roles: %w", err) }
+	roles := make([]domain.Role, 0, len(rows)); for _, row := range rows { id, err := stringID(row.ID); if err != nil { return nil, err }; roles = append(roles, domain.Role{ID: domain.RoleID(id), OrganizationID: organizationID, Name: row.Name}) }; return roles, nil
+}
+
+func (s *SQLStore) ListPermissionCatalog(ctx context.Context) ([]domain.Permission, error) {
+	rows, err := dbgen.New(s.db).ListPermissionCatalog(ctx); if err != nil { return nil, fmt.Errorf("list permission catalog: %w", err) }
+	values := make([]domain.Permission, 0, len(rows)); for _, row := range rows { id, err := stringID(row.ID); if err != nil { return nil, err }; values = append(values, domain.Permission{ID: domain.PermissionID(id), Name: authorization.Permission(row.Name), Description: row.Description, Group: permissionGroup(row.Name)}) }; return values, nil
+}
+func (s *SQLStore) ListRolePermissions(ctx context.Context, organizationID domain.ID, roleID domain.RoleID) ([]authorization.Permission, error) {
+	o, err := idValue(organizationID); if err != nil { return nil, err }; role, err := idValue(roleID); if err != nil { return nil, err }; rows, err := dbgen.New(s.db).ListRolePermissions(ctx, dbgen.ListRolePermissionsParams{OrganizationID: o, ID: role}); if err != nil { return nil, fmt.Errorf("list role permissions: %w", err) }; values := make([]authorization.Permission, len(rows)); for i := range rows { values[i] = authorization.Permission(rows[i]) }; return values, nil
+}
+func (s *SQLStore) CreateRoleWithPermissions(ctx context.Context, organizationID domain.ID, role domain.Role, permissions []authorization.Permission) error {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return fmt.Errorf("begin role transaction: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx); o, err := idValue(organizationID); if err != nil { return err }; id, err := idValue(role.ID); if err != nil { return err }
+	if err = q.CreateRole(ctx, dbgen.CreateRoleParams{ID: id, OrganizationID: o, Name: role.Name}); err != nil { return fmt.Errorf("create role: %w", err) }; for _, permission := range permissions { if err = q.GrantRolePermissionByName(ctx, dbgen.GrantRolePermissionByNameParams{RoleID: id, Name: string(permission)}); err != nil { return fmt.Errorf("grant role permission: %w", err) } }; return tx.Commit()
+}
+func (s *SQLStore) ReplaceRolePermissions(ctx context.Context, organizationID domain.ID, roleID domain.RoleID, permissions []authorization.Permission) error {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return fmt.Errorf("begin role grants transaction: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx); o, err := idValue(organizationID); if err != nil { return err }; id, err := idValue(roleID); if err != nil { return err }; rolePermissions, err := q.ListRolePermissions(ctx, dbgen.ListRolePermissionsParams{OrganizationID: o, ID: id}); if err != nil { return fmt.Errorf("find role: %w", err) }; _ = rolePermissions
+	if err = q.DeleteRolePermissions(ctx, id); err != nil { return fmt.Errorf("clear role permissions: %w", err) }; for _, permission := range permissions { if err = q.GrantRolePermissionByName(ctx, dbgen.GrantRolePermissionByNameParams{RoleID: id, Name: string(permission)}); err != nil { return fmt.Errorf("grant role permission: %w", err) } }; return tx.Commit()
+}
+func permissionGroup(name string) string { for i, c := range name { if c == '.' { return name[:i] } }; return "workspace" }
+
+func (s *SQLStore) AddMembershipByEmail(ctx context.Context, organizationID domain.ID, email string) error {
+	organizationValue, err := idValue(organizationID); if err != nil { return err }
+	added, err := dbgen.New(s.db).AddMembershipByEmail(ctx, dbgen.AddMembershipByEmailParams{OrganizationID: organizationValue, Email: email}); if err != nil { return fmt.Errorf("add organization member: %w", err) }; if added == 0 { return sql.ErrNoRows }; return nil
+}
+
+func (s *SQLStore) CreateMember(ctx context.Context, organizationID domain.ID, member domain.MemberAccount, passwordHash string, roleID domain.RoleID) error {
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return fmt.Errorf("begin member transaction: %w", err) }; defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(s.db).WithTx(tx)
+	organizationValue, err := idValue(organizationID); if err != nil { return err }; userValue, err := idValue(member.UserID); if err != nil { return err }; roleValue, err := idValue(roleID); if err != nil { return err }
+	if err = q.CreateUser(ctx, dbgen.CreateUserParams{ID: userValue, Email: member.Email, DisplayName: member.DisplayName, CreatedAt: member.CreatedAt}); err != nil { return fmt.Errorf("create member user: %w", err) }
+	if err = q.CreateUserCredential(ctx, dbgen.CreateUserCredentialParams{UserID: userValue, PasswordHash: passwordHash, CreatedAt: member.CreatedAt, UpdatedAt: member.CreatedAt}); err != nil { return fmt.Errorf("create member credential: %w", err) }
+	if err = q.CreateMembership(ctx, dbgen.CreateMembershipParams{OrganizationID: organizationValue, UserID: userValue}); err != nil { return fmt.Errorf("create member membership: %w", err) }
+	{{if eq .Database "mysql"}}assigned, err := q.AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: organizationValue, UserID: userValue, ID: roleValue, OrganizationID_2: organizationValue}){{else}}assigned, err := q.AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: organizationValue, UserID: userValue, ID: roleValue}){{end}}
+	if err != nil { return fmt.Errorf("assign member role: %w", err) }; if assigned == 0 { return sql.ErrNoRows }
+	if err = tx.Commit(); err != nil { return fmt.Errorf("commit member transaction: %w", err) }; return nil
+}
+
 func (s *SQLStore) ListPermissions(ctx context.Context, organizationID domain.ID, userID platformauth.UserID) ([]authorization.Permission, error) {
 	organizationValue, err := idValue(organizationID); if err != nil { return nil, err }
 	userValue, err := idValue(userID); if err != nil { return nil, err }
@@ -96,6 +152,14 @@ func (s *SQLStore) AssignRole(ctx context.Context, organizationID domain.ID, use
 	return nil
 }
 {{else}}
+func (*SQLStore) ListMembers(context.Context, domain.ID) ([]domain.Member, error) { return nil, fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) ListRoles(context.Context, domain.ID) ([]domain.Role, error) { return nil, fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) ListPermissionCatalog(context.Context) ([]domain.Permission, error) { return nil, fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) ListRolePermissions(context.Context, domain.ID, domain.RoleID) ([]authorization.Permission, error) { return nil, fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) CreateRoleWithPermissions(context.Context, domain.ID, domain.Role, []authorization.Permission) error { return fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) ReplaceRolePermissions(context.Context, domain.ID, domain.RoleID, []authorization.Permission) error { return fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) AddMembershipByEmail(context.Context, domain.ID, string) error { return fmt.Errorf("workspace administration requires the rbac feature") }
+func (*SQLStore) CreateMember(context.Context, domain.ID, domain.MemberAccount, string, domain.RoleID) error { return fmt.Errorf("workspace administration requires the rbac feature") }
 func (*SQLStore) ListPermissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error) { return nil, nil }
 func (*SQLStore) AssignRole(context.Context, domain.ID, platformauth.UserID, domain.RoleID) error { return fmt.Errorf("role assignments require the rbac feature") }
 {{end}}

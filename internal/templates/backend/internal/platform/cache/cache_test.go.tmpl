@@ -1,0 +1,26 @@
+package cache
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+func TestMemoryStoreCopiesValuesAndExpires(t *testing.T) {
+	store := NewMemoryStore()
+	value := []byte("before")
+	if err := store.Set(context.Background(), "key", value, 10*time.Millisecond); err != nil { t.Fatal(err) }
+	value[0] = 'X'
+	got, found, err := store.Get(context.Background(), "key")
+	if err != nil || !found || string(got) != "before" { t.Fatalf("Get() = %q, %t, %v", got, found, err) }
+	time.Sleep(15 * time.Millisecond)
+	if _, found, err := store.Get(context.Background(), "key"); err != nil || found { t.Fatalf("expired Get() found=%t err=%v", found, err) }
+}
+
+func TestNamespaceAvoidsKeyCollisions(t *testing.T) {
+	backing := NewMemoryStore()
+	first := Namespace(backing, "first")
+	second := Namespace(backing, "second")
+	if err := first.Set(context.Background(), "key", []byte("one"), 0); err != nil { t.Fatal(err) }
+	if _, found, err := second.Get(context.Background(), "key"); err != nil || found { t.Fatalf("second namespace found=%t err=%v", found, err) }
+}

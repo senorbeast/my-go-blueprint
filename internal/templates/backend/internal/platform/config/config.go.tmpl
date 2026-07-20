@@ -2,17 +2,33 @@ package config
 
 import (
 	"errors"
+	{{if and .Auth .RBAC}}
+	"net/mail"
+	{{end}}
 	"os"
 	"strings"
 )
 
-type Config struct { Environment, HTTPAddress, DatabaseURL, LogLevel, CursorSecret, JWTSecret string; CookieSecure bool; CORSOrigins []string }
+type OwnerBootstrap struct { Email, Password, OrganizationName string }
+func (b OwnerBootstrap) Enabled() bool { return b.Email != "" || b.Password != "" || b.OrganizationName != "" }
+
+type Config struct { Environment, HTTPAddress, DatabaseURL, LogLevel, CursorSecret, JWTSecret, QueueDriver, RabbitMQURL, CacheDriver, CacheURL, CachePrefix string; CookieSecure bool; CORSOrigins []string; OwnerBootstrap OwnerBootstrap }
 
 func Load() (Config, error) {
-	c := Config{Environment:value("APP_ENV","development"), HTTPAddress:value("HTTP_ADDRESS",":8080"), DatabaseURL:os.Getenv("DATABASE_URL"), LogLevel:value("LOG_LEVEL","info"), CursorSecret:os.Getenv("CURSOR_SECRET"), JWTSecret:os.Getenv("JWT_SECRET"), CookieSecure:os.Getenv("COOKIE_SECURE")=="true", CORSOrigins:split(value("CORS_ORIGINS","http://localhost:5173"))}
+	c := Config{Environment:value("APP_ENV","development"), HTTPAddress:value("HTTP_ADDRESS",":8080"), DatabaseURL:os.Getenv("DATABASE_URL"), LogLevel:value("LOG_LEVEL","info"), CursorSecret:os.Getenv("CURSOR_SECRET"), JWTSecret:os.Getenv("JWT_SECRET"), QueueDriver:value("QUEUE_DRIVER","sql"), RabbitMQURL:os.Getenv("RABBITMQ_URL"), CacheDriver:value("CACHE_DRIVER", "{{if .Cache}}redis{{else}}memory{{end}}"), CacheURL:os.Getenv("CACHE_URL"), CachePrefix:value("CACHE_PREFIX", "app"), CookieSecure:os.Getenv("COOKIE_SECURE")=="true", CORSOrigins:split(value("CORS_ORIGINS","http://localhost:5173")), OwnerBootstrap:OwnerBootstrap{Email:strings.TrimSpace(os.Getenv("BOOTSTRAP_OWNER_EMAIL")), Password:os.Getenv("BOOTSTRAP_OWNER_PASSWORD"), OrganizationName:strings.TrimSpace(os.Getenv("BOOTSTRAP_OWNER_ORGANIZATION_NAME") )}}
 	if c.DatabaseURL == "" { return Config{}, errors.New("DATABASE_URL is required") }
+	if c.QueueDriver != "sql" && c.QueueDriver != "rabbitmq" { return Config{}, errors.New("QUEUE_DRIVER must be sql or rabbitmq") }
+	if c.QueueDriver == "rabbitmq" && c.RabbitMQURL == "" { return Config{}, errors.New("RABBITMQ_URL is required when QUEUE_DRIVER=rabbitmq") }
+	if c.CacheDriver != "memory" && c.CacheDriver != "redis" { return Config{}, errors.New("CACHE_DRIVER must be memory or redis") }
+	if c.CacheDriver == "redis" && c.CacheURL == "" { return Config{}, errors.New("CACHE_URL is required when CACHE_DRIVER=redis") }
 	if len(c.CursorSecret) < 32 { return Config{}, errors.New("CURSOR_SECRET must be at least 32 bytes") }
 {{if .Auth}}	if len(c.JWTSecret) < 32 { return Config{}, errors.New("JWT_SECRET must be at least 32 bytes") }
+{{if .RBAC}}	if c.OwnerBootstrap.Enabled() {
+		if c.OwnerBootstrap.Email == "" || c.OwnerBootstrap.Password == "" || c.OwnerBootstrap.OrganizationName == "" { return Config{}, errors.New("BOOTSTRAP_OWNER_EMAIL, BOOTSTRAP_OWNER_PASSWORD, and BOOTSTRAP_OWNER_ORGANIZATION_NAME must be set together") }
+		if _, err := mail.ParseAddress(c.OwnerBootstrap.Email); err != nil { return Config{}, errors.New("BOOTSTRAP_OWNER_EMAIL must be a valid email address") }
+		if len(c.OwnerBootstrap.Password) < 12 { return Config{}, errors.New("BOOTSTRAP_OWNER_PASSWORD must be at least 12 characters") }
+	}
+{{end}}
 {{end}}	if len(c.CORSOrigins) == 0 { return Config{}, errors.New("at least one CORS origin is required") }
 	return c, nil
 }

@@ -5,11 +5,49 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"{{.Module}}/backend/internal/platform/config"
+	"{{.Module}}/backend/internal/platform/database"
+	"{{.Module}}/backend/internal/platform/jobs"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Print("scheduler ready; cron implementations enqueue jobs through the job interface")
-	<-ctx.Done()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+	db, err := database.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck
+	queue, err := jobs.Open(ctx, cfg.QueueDriver, cfg.RabbitMQURL, db.SQL())
+	if err != nil { log.Fatal(err) }
+	if closer, ok := queue.(jobs.Closer); ok {
+		defer closer.Close() //nolint:errcheck
+	}
+	enqueueHeartbeat := func() {
+		job := jobs.NewDemoHeartbeat(time.Now())
+		id, err := queue.Enqueue(ctx, job)
+		if err != nil {
+			log.Printf("enqueue demo heartbeat: %v", err)
+			return
+		}
+		log.Printf("scheduled demo heartbeat %s", id)
+	}
+	enqueueHeartbeat()
+	log.Print("scheduler ready; enqueuing demo heartbeat every minute")
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			enqueueHeartbeat()
+		}
+	}
 }

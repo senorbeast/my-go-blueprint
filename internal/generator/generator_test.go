@@ -82,28 +82,28 @@ func TestAddFeatureResolvesDependenciesAndProtectsChanges(t *testing.T) {
 	value.Features = []spec.Feature{spec.FeatureJobs}
 	generator := New(RendererFunc(func(config spec.Config) (map[string][]byte, error) {
 		files := map[string][]byte{"base.txt": []byte("base")}
-		if config.Has(spec.FeatureCMS) {
-			files["cms.txt"] = []byte("cms")
+		if config.Has(spec.FeatureContent) {
+			files["content.txt"] = []byte("content")
 		}
 		return files, nil
 	}))
 	if _, err := generator.Create(value); err != nil {
 		t.Fatal(err)
 	}
-	result, err := generator.AddFeature(root, spec.FeatureCMS, false)
+	result, err := generator.AddFeature(root, spec.FeatureContent, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Config.Has(spec.FeatureAuth) || !result.Config.Has(spec.FeatureRBAC) || !result.Config.Has(spec.FeatureCMS) {
+	if !result.Config.Has(spec.FeatureAuth) || !result.Config.Has(spec.FeatureRBAC) || !result.Config.Has(spec.FeatureContent) {
 		t.Fatalf("dependencies not resolved: %v", result.Config.Features)
 	}
-	if _, err := os.Stat(filepath.Join(root, "cms.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "content.txt")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "base.txt"), []byte("user change"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := generator.AddFeature(root, spec.FeatureCRM, false); err != nil {
+	if _, err := generator.AddFeature(root, spec.FeatureCustomers, false); err != nil {
 		t.Fatalf("AddFeature() = %v", err)
 	}
 	contents, err := os.ReadFile(filepath.Join(root, "base.txt"))

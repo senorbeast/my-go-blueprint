@@ -1,0 +1,14 @@
+package application
+
+import (
+	"context"
+
+	"{{.Module}}/backend/internal/features/email/domain"
+)
+
+// Queue is the email feature's application seam. The jobs adapter maps a
+// validated message to durable queue storage without leaking it into domain code.
+type Queue interface { Enqueue(context.Context, domain.Message) (string, error) }
+type Service struct { queue Queue }
+func New(queue Queue) *Service { return &Service{queue: queue} }
+func (s *Service) Request(ctx context.Context, to, subject, text string) (string, error) { message, err := domain.NewMessage(to, subject, text); if err != nil { return "", err }; return s.queue.Enqueue(ctx, message) }

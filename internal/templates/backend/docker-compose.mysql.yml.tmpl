@@ -5,5 +5,43 @@ services:
     ports: ["3306:3306"]
     healthcheck: {test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uapp", "-papp"], interval: 2s, timeout: 2s, retries: 30}
     volumes: ["db-data:/var/lib/mysql"]
-volumes: {db-data: {}}
-
+  {{if .Jobs}}rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment: {RABBITMQ_DEFAULT_USER: app, RABBITMQ_DEFAULT_PASS: app}
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck: {test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"], interval: 2s, timeout: 5s, retries: 30}
+  {{end}}
+  {{if .Email}}mailpit:
+    image: axllent/mailpit:v1.25
+    ports: ["1025:1025", "8025:8025"]
+    healthcheck: {test: ["CMD", "/mailpit", "healthcheck"], interval: 2s, timeout: 5s, retries: 30}
+  {{end}}
+  {{if .Cache}}redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 2s, timeout: 2s, retries: 20}
+    volumes: ["redis-data:/data"]
+  redisinsight:
+    image: redis/redisinsight:latest
+    ports: ["5540:5540"]
+    depends_on:
+      redis: {condition: service_healthy}
+  {{end}}
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["observability"]
+    ports: ["9090:9090"]
+    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+  grafana:
+    image: grafana/grafana:12.0.2
+    profiles: ["observability"]
+    ports: ["3000:3000"]
+    environment: {GF_SECURITY_ADMIN_USER: app, GF_SECURITY_ADMIN_PASSWORD: app, GF_USERS_ALLOW_SIGN_UP: "false"}
+    volumes: ["./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro", "grafana-data:/var/lib/grafana"]
+    depends_on:
+      prometheus: {condition: service_started}
+volumes:
+  db-data: {}
+{{if .Cache}}  redis-data: {}
+{{end}}
+  grafana-data: {}

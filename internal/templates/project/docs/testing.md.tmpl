@@ -7,3 +7,21 @@
 - `make verify-generated` is the local and acceptance-harness entrypoint.
 
 Seed profiles are deterministic and idempotent. Run a selected profile twice in integration tests and verify behavior through authenticated public routes.
+
+## Demo seed contract
+
+- `demo` creates the documented development owner plus representative workspace roles, members, content, CRM records, queue activity, and schedules selected by the feature graph.
+- Keep fixtures deterministic: use stable identities and timestamps where possible, and assert that a second seed run creates no duplicates.
+- Every demo walkthrough must begin from `make db-down && make db-up`, migrations, and `go run ./cmd/seed --profile demo`; do not depend on an operator's existing database state.
+
+## Regression plan
+
+Run these layers in CI and before a release:
+
+1. Generator: `go test ./...`, generate each supported feature graph, and verify its manifest.
+2. Backend: run migrations from an empty {{.Database}} database, replay demo seed, then exercise authorization, queue retry/idempotency, and scheduled-job completion through public HTTP routes.
+3. Frontend: regenerate the OpenAPI client, typecheck, run Vitest, and build. Keep a seeded Playwright path for owner sign-in → CRM create/edit → workspace member/role action → email enqueue → completed job/schedule evidence.
+4. Integrations: when selected, start RabbitMQ, Mailpit, and Redis; enqueue a job, assert worker completion, inspect the dead-letter/retry path, and assert test email through the Mailpit API once an SMTP adapter is enabled.
+5. Failure evidence: upload Playwright screenshots/traces, API/worker/scheduler logs, and Compose logs on CI failure.
+
+The in-app Operations page is application-safe observability. RabbitMQ Management is the broker source of truth; Mailpit is the development email source of truth; RedisInsight is only relevant when the optional Redis cache is selected.

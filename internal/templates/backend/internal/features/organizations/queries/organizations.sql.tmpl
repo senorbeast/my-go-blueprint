@@ -6,6 +6,9 @@ VALUES ({{if eq .Database "postgres"}}$1, $2, $3{{else}}?, ?, ?{{end}});
 INSERT INTO memberships (organization_id, user_id)
 VALUES ({{if eq .Database "postgres"}}$1, $2{{else}}?, ?{{end}});
 
+-- name: CountOrganizations :one
+SELECT COUNT(*) FROM organizations;
+
 -- name: FindMembership :one
 SELECT 1 FROM memberships
 WHERE organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
@@ -27,6 +30,37 @@ WHERE m.user_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
 ORDER BY o.created_at ASC, o.id ASC;
 
 {{if .RBAC}}
+-- name: ListOrganizationMembers :many
+SELECT m.organization_id, u.id AS user_id, u.email, u.display_name,
+       r.id AS role_id, r.name AS role_name
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+LEFT JOIN membership_roles mr ON mr.organization_id = m.organization_id AND mr.user_id = m.user_id
+LEFT JOIN roles r ON r.id = mr.role_id
+WHERE m.organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+ORDER BY u.display_name ASC, u.email ASC, r.name ASC;
+
+-- name: ListOrganizationRoles :many
+SELECT id, organization_id, name
+FROM roles
+WHERE organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}}
+ORDER BY name ASC;
+
+-- name: ListPermissionCatalog :many
+SELECT id, name, description FROM permissions WHERE name <> 'platform.admin' ORDER BY name;
+
+-- name: ListRolePermissions :many
+SELECT p.name FROM permissions p JOIN role_permissions rp ON rp.permission_id = p.id JOIN roles r ON r.id = rp.role_id
+WHERE r.organization_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}} AND r.id = {{if eq .Database "postgres"}}$2{{else}}?{{end}} ORDER BY p.name;
+
+-- name: AddMembershipByEmail :execrows
+INSERT INTO memberships (organization_id, user_id)
+SELECT {{if eq .Database "postgres"}}$1{{else}}?{{end}}, u.id
+FROM users u
+WHERE u.email = {{if eq .Database "postgres"}}$2{{else}}?{{end}};
+{{end}}
+
+{{if .RBAC}}
 -- name: CreateRole :exec
 INSERT INTO roles (id, organization_id, name)
 VALUES ({{if eq .Database "postgres"}}$1, $2, $3{{else}}?, ?, ?{{end}});
@@ -38,6 +72,9 @@ VALUES ({{if eq .Database "postgres"}}$1, $2, $3{{else}}?, ?, ?{{end}});
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT {{if eq .Database "postgres"}}$1, id{{else}}?, id{{end}} FROM permissions
 WHERE name = {{if eq .Database "postgres"}}$2{{else}}?{{end}};
+
+-- name: DeleteRolePermissions :exec
+DELETE FROM role_permissions WHERE role_id = {{if eq .Database "postgres"}}$1{{else}}?{{end}};
 
 -- name: AssignMembershipRole :execrows
 INSERT INTO membership_roles (organization_id, user_id, role_id)

@@ -1,8 +1,13 @@
 export type CRMEntity = "companies" | "contacts" | "pipelines" | "stages" | "deals" | "activities";
-export type CRMRecord = { id: string; organizationID: string; name?: string; createdAt: string };
+export type CRMRecord = {
+  id: string;
+  organizationID: string;
+  name?: string;
+  email?: string;
+  createdAt: string;
+};
 export type CursorPage<T> = { items: T[]; nextCursor?: string; hasMore: boolean };
 export const crmPermissions: Record<CRMEntity, string> = {
   companies: "crm.companies.view", contacts: "crm.contacts.view", pipelines: "crm.pipelines.view",
   stages: "crm.stages.view", deals: "crm.deals.view", activities: "crm.activities.view",
 };
-

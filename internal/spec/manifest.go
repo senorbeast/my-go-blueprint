@@ -2,7 +2,7 @@ package spec
 
 import "time"
 
-const ManifestVersion = 1
+const ManifestVersion = 2
 
 type ManagedFile struct {
 	Path       string `json:"path"`

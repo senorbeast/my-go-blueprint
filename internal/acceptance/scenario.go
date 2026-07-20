@@ -38,7 +38,8 @@ func (s Scenario) Validate() error {
 	}
 	dependencies := map[string][]string{
 		"rbac": {"auth"}, "cron": {"jobs"},
-		"cms": {"auth", "rbac"}, "crm": {"auth", "rbac"},
+		"content": {"auth", "rbac"}, "customers": {"auth", "rbac"}, "sales": {"customers"},
+		"workspace": {"auth", "rbac"}, "audit": {"auth", "rbac"}, "files": {"auth", "rbac"}, "email": {"jobs"},
 	}
 	for feature, required := range dependencies {
 		if !selected[feature] {
@@ -73,12 +74,13 @@ func (s Scenario) GeneratorArgs(output string) []string {
 // and every feature at least once. Full pairwise expansion belongs in nightly CI.
 func PullRequestScenarios() []Scenario {
 	return []Scenario{
-		{Name: "pg-default", Database: "postgres", Frontend: true, Seed: "minimal", Features: []string{"auth", "rbac", "jobs", "cron"}, Browser: true},
-		{Name: "mysql-full", Database: "mysql", Frontend: true, Seed: "demo", Features: []string{"auth", "rbac", "jobs", "cron", "cms", "crm"}, Browser: true},
+		{Name: "pg-default", Database: "postgres", Frontend: true, Seed: "minimal", Features: []string{"auth", "rbac", "workspace", "jobs", "cron"}, Browser: true},
+		{Name: "mysql-full", Database: "mysql", Frontend: true, Seed: "demo", Features: []string{"auth", "rbac", "workspace", "jobs", "cron", "content", "customers", "sales", "audit", "files", "email"}, Browser: true},
 		{Name: "minimal-api", Database: "postgres", Frontend: false, Seed: "none"},
-		{Name: "pg-cms", Database: "postgres", Frontend: true, Seed: "demo", Features: []string{"auth", "rbac", "cms"}, Browser: true},
-		{Name: "mysql-crm", Database: "mysql", Frontend: true, Seed: "demo", Features: []string{"auth", "rbac", "crm"}, Browser: true},
+		{Name: "pg-content", Database: "postgres", Frontend: true, Seed: "demo", Features: []string{"auth", "rbac", "content"}, Browser: true},
+		{Name: "mysql-customers", Database: "mysql", Frontend: true, Seed: "demo", Features: []string{"auth", "rbac", "customers"}, Browser: true},
 		{Name: "pg-jobs", Database: "postgres", Frontend: false, Seed: "minimal", Features: []string{"jobs", "cron"}},
+		{Name: "pg-cache", Database: "postgres", Frontend: false, Seed: "minimal", Features: []string{"cache"}},
 	}
 }
 
@@ -139,17 +141,21 @@ func allCandidates() []Scenario {
 
 // ResolvedFeatureGraphs is the generator's canonical valid feature graph set.
 // It keeps acceptance coverage aligned with dependency resolution: the
-// auth/RBAC/CMS/CRM branch has six valid states and jobs/cron has three.
+// feature pack dependencies. It keeps acceptance coverage aligned with the
+// generator without forcing the acceptance suite to enumerate every subset.
 func ResolvedFeatureGraphs() [][]string {
 	workspace := [][]string{
 		nil,
 		{"auth"},
 		{"auth", "rbac"},
-		{"auth", "rbac", "cms"},
-		{"auth", "rbac", "crm"},
-		{"auth", "rbac", "cms", "crm"},
+		{"auth", "rbac", "workspace"},
+		{"auth", "rbac", "content"},
+		{"auth", "rbac", "customers"},
+		{"auth", "rbac", "customers", "sales"},
+		{"auth", "rbac", "audit", "files"},
+		{"auth", "rbac", "workspace", "content", "customers", "sales", "audit", "files"},
 	}
-	automation := [][]string{nil, {"jobs"}, {"jobs", "cron"}}
+	automation := [][]string{nil, {"jobs"}, {"jobs", "cron"}, {"jobs", "email"}, {"jobs", "cron", "email"}}
 	graphs := make([][]string, 0, len(workspace)*len(automation))
 	for _, left := range workspace {
 		for _, right := range automation {
@@ -170,7 +176,7 @@ func optionPairs(scenario Scenario) map[string]bool {
 		fmt.Sprintf("frontend=%t", scenario.Frontend),
 		"seed=" + scenario.Seed,
 	}
-	for _, feature := range []string{"auth", "rbac", "jobs", "cron", "cms", "crm"} {
+	for _, feature := range []string{"auth", "rbac", "workspace", "jobs", "cron", "content", "customers", "sales", "audit", "files", "email"} {
 		values = append(values, fmt.Sprintf("%s=%t", feature, selected[feature]))
 	}
 	pairs := make(map[string]bool)

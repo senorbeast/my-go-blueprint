@@ -14,6 +14,14 @@ type Store interface {
 	DefaultOrganization(context.Context, platformauth.UserID) (domain.Organization, error)
 	ListOrganizationsForUser(context.Context, platformauth.UserID) ([]domain.Organization, error)
 	ListPermissions(context.Context, domain.ID, platformauth.UserID) ([]authorization.Permission, error)
+	ListMembers(context.Context, domain.ID) ([]domain.Member, error)
+	ListRoles(context.Context, domain.ID) ([]domain.Role, error)
+	ListPermissionCatalog(context.Context) ([]domain.Permission, error)
+	ListRolePermissions(context.Context, domain.ID, domain.RoleID) ([]authorization.Permission, error)
+	CreateRoleWithPermissions(context.Context, domain.ID, domain.Role, []authorization.Permission) error
+	ReplaceRolePermissions(context.Context, domain.ID, domain.RoleID, []authorization.Permission) error
+	AddMembershipByEmail(context.Context, domain.ID, string) error
+	CreateMember(context.Context, domain.ID, domain.MemberAccount, string, domain.RoleID) error
 	AssignRole(context.Context, domain.ID, platformauth.UserID, domain.RoleID) error
 }
 type Repository struct{ store Store }
@@ -30,6 +38,14 @@ func (r *Repository) ListForUser(ctx context.Context, u platformauth.UserID) ([]
 func (r *Repository) Permissions(ctx context.Context, o domain.ID, u platformauth.UserID) ([]authorization.Permission, error) {
 	return r.store.ListPermissions(ctx, o, u)
 }
+func (r *Repository) ListMembers(ctx context.Context, o domain.ID) ([]domain.Member, error) { return r.store.ListMembers(ctx, o) }
+func (r *Repository) ListRoles(ctx context.Context, o domain.ID) ([]domain.Role, error) { return r.store.ListRoles(ctx, o) }
+func (r *Repository) ListPermissionCatalog(ctx context.Context, _ domain.ID) ([]domain.Permission, error) { return r.store.ListPermissionCatalog(ctx) }
+func (r *Repository) RolePermissions(ctx context.Context, o domain.ID, role domain.RoleID) ([]authorization.Permission, error) { return r.store.ListRolePermissions(ctx, o, role) }
+func (r *Repository) CreateRole(ctx context.Context, o domain.ID, role domain.Role, permissions []authorization.Permission) error { return r.store.CreateRoleWithPermissions(ctx, o, role, permissions) }
+func (r *Repository) ReplaceRolePermissions(ctx context.Context, o domain.ID, role domain.RoleID, permissions []authorization.Permission) error { return r.store.ReplaceRolePermissions(ctx, o, role, permissions) }
+func (r *Repository) AddMemberByEmail(ctx context.Context, o domain.ID, email string) error { return r.store.AddMembershipByEmail(ctx, o, email) }
+func (r *Repository) CreateMember(ctx context.Context, o domain.ID, member domain.MemberAccount, passwordHash string, role domain.RoleID) error { return r.store.CreateMember(ctx, o, member, passwordHash, role) }
 func (r *Repository) AssignRole(ctx context.Context, o domain.ID, u platformauth.UserID, role domain.RoleID) error {
 	return r.store.AssignRole(ctx, o, u, role)
 }

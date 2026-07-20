@@ -1,0 +1,55 @@
+package bootstrap
+
+{{if and .Auth .RBAC}}
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+	"{{.Module}}/backend/internal/platform/config"
+	"{{.Module}}/backend/internal/platform/database/dbgen"
+)
+
+// bootstrapOwner creates the first tenant owner only when both principal
+// tables are empty. It intentionally has no HTTP entry point and never logs
+// bootstrap credentials. The transaction prevents partial owners on failure.
+func bootstrapOwner(ctx context.Context, db *sql.DB, cfg config.OwnerBootstrap) error {
+	if !cfg.Enabled() { return nil }
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil { return fmt.Errorf("begin owner bootstrap: %w", err) }
+	defer tx.Rollback() //nolint:errcheck
+	q := dbgen.New(db).WithTx(tx)
+	userCount, err := q.CountUsers(ctx)
+	if err != nil { return fmt.Errorf("count bootstrap users: %w", err) }
+	organizationCount, err := q.CountOrganizations(ctx)
+	if err != nil { return fmt.Errorf("count bootstrap organizations: %w", err) }
+	if userCount != 0 || organizationCount != 0 { return nil }
+
+	now := time.Now().UTC()
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(cfg.Password), bcrypt.DefaultCost)
+	if err != nil { return fmt.Errorf("hash owner bootstrap password: %w", err) }
+	userID, organizationID, roleID, permissionID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if err = q.CreateUser(ctx, dbgen.CreateUserParams{ID: bootstrapID(userID), Email: strings.ToLower(strings.TrimSpace(cfg.Email)), DisplayName: "Owner", CreatedAt: now}); err != nil { return fmt.Errorf("create bootstrap owner: %w", err) }
+	if err = q.CreateUserCredential(ctx, dbgen.CreateUserCredentialParams{UserID: bootstrapID(userID), PasswordHash: string(passwordHash), CreatedAt: now, UpdatedAt: now}); err != nil { return fmt.Errorf("create bootstrap credential: %w", err) }
+	if err = q.CreateOrganization(ctx, dbgen.CreateOrganizationParams{ID: bootstrapID(organizationID), Name: cfg.OrganizationName, CreatedAt: now}); err != nil { return fmt.Errorf("create bootstrap organization: %w", err) }
+	if err = q.CreateMembership(ctx, dbgen.CreateMembershipParams{OrganizationID: bootstrapID(organizationID), UserID: bootstrapID(userID)}); err != nil { return fmt.Errorf("create bootstrap membership: %w", err) }
+	if err = q.CreateRole(ctx, dbgen.CreateRoleParams{ID: bootstrapID(roleID), OrganizationID: bootstrapID(organizationID), Name: "owner"}); err != nil { return fmt.Errorf("create bootstrap owner role: %w", err) }
+	if err = q.CreatePermissionIfAbsent(ctx, dbgen.CreatePermissionIfAbsentParams{ID: bootstrapID(permissionID), Name: "platform.admin"}); err != nil { return fmt.Errorf("create bootstrap permission: %w", err) }
+	if err = q.GrantRolePermissionByName(ctx, dbgen.GrantRolePermissionByNameParams{RoleID: bootstrapID(roleID), Name: "platform.admin"}); err != nil { return fmt.Errorf("grant bootstrap owner permission: %w", err) }
+	{{if eq .Database "mysql"}}assigned, err := q.AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: bootstrapID(organizationID), UserID: bootstrapID(userID), ID: bootstrapID(roleID), OrganizationID_2: bootstrapID(organizationID)}){{else}}assigned, err := q.AssignMembershipRole(ctx, dbgen.AssignMembershipRoleParams{OrganizationID: bootstrapID(organizationID), UserID: bootstrapID(userID), ID: bootstrapID(roleID)}){{end}}
+	if err != nil { return fmt.Errorf("assign bootstrap owner role: %w", err) }
+	if assigned == 0 { return fmt.Errorf("assign bootstrap owner role: role not found") }
+	if err = tx.Commit(); err != nil { return fmt.Errorf("commit owner bootstrap: %w", err) }
+	return nil
+}
+
+{{if eq .Database "mysql"}}
+func bootstrapID(value uuid.UUID) []byte { return value[:] }
+{{else}}
+func bootstrapID(value uuid.UUID) uuid.UUID { return value }
+{{end}}
+{{end}}

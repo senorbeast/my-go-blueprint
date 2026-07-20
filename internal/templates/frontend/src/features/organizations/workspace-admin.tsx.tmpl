@@ -1,0 +1,123 @@
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+type Role = { id: string; name: string };
+type Member = { userId: string; email: string; displayName: string; roles: Role[] };
+type Permission = { id: string; name: string; description: string; group: string };
+type MembersResponse = { members: Member[] };
+type RolesResponse = { roles: Role[] };
+type CatalogResponse = { permissions: Permission[] };
+type GrantsResponse = { permissions: string[] };
+
+const membersPath = (organizationID: string) => `/api/v1/organizations/${organizationID}/members`;
+const rolesPath = (organizationID: string) => `/api/v1/organizations/${organizationID}/roles`;
+const workspaceKey = (organizationID: string) => ["workspace", organizationID] as const;
+const csrfHeader = (): Record<string, string> => {
+  const token = document.cookie.split("; ").find((entry) => entry.startsWith("csrf_token="))?.slice("csrf_token=".length);
+  return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
+};
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    credentials: "include",
+    ...init,
+    headers: { "content-type": "application/json", ...csrfHeader(), ...init?.headers },
+  });
+  if (!response.ok) throw new Error("Workspace request failed");
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+}
+
+function PermissionEditor({ catalog, selected, onChange, disabled = false }: { catalog: Permission[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
+  const groups = useMemo(() => catalog.reduce<Record<string, Permission[]>>((result, permission) => {
+    (result[permission.group] ??= []).push(permission);
+    return result;
+  }, {}), [catalog]);
+  return <fieldset disabled={disabled} className="grid gap-3">
+    <legend className="text-sm font-medium">Permissions</legend>
+    {Object.entries(groups).map(([group, groupPermissions]) => <div key={group} className="rounded-md border p-3">
+      <p className="mb-2 text-sm font-semibold capitalize">{group}</p>
+      {groupPermissions.map((permission) => <label key={permission.name} className="flex gap-2 py-1 text-sm">
+        <input type="checkbox" checked={selected.includes(permission.name)} onChange={(event) => onChange(event.target.checked ? [...selected, permission.name] : selected.filter((value) => value !== permission.name))} />
+        <span>{permission.name}<span className="ml-2 text-muted-foreground">{permission.description}</span></span>
+      </label>)}
+    </div>)}
+  </fieldset>;
+}
+
+function RolesPanel({ organizationID, roles, catalog }: { organizationID: string; roles: Role[]; catalog: Permission[] }) {
+  const client = useQueryClient();
+  const [name, setName] = useState("");
+  const [newPermissions, setNewPermissions] = useState<string[]>([]);
+  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [editedPermissions, setEditedPermissions] = useState<string[]>([]);
+  const grants = useQuery({ queryKey: [...workspaceKey(organizationID), "role", selectedRole?.id], queryFn: () => request<GrantsResponse>(`${rolesPath(organizationID)}/${selectedRole!.id}/permissions`), enabled: !!selectedRole });
+  useEffect(() => { if (grants.data) setEditedPermissions(grants.data.permissions); }, [grants.data]);
+  useEffect(() => { if (selectedRole && !roles.some((role) => role.id === selectedRole.id)) setSelectedRole(null); }, [roles, selectedRole]);
+  const refreshRoles = () => client.invalidateQueries({ queryKey: [...workspaceKey(organizationID), "roles"] });
+  const create = useMutation({
+    mutationFn: () => request<Role>(rolesPath(organizationID), { method: "POST", body: JSON.stringify({ name: name.trim(), permissions: newPermissions }) }),
+    onSuccess: () => { setName(""); setNewPermissions([]); void refreshRoles(); },
+  });
+  const save = useMutation({
+    mutationFn: () => request<void>(`${rolesPath(organizationID)}/${selectedRole!.id}/permissions`, { method: "PUT", body: JSON.stringify({ permissions: editedPermissions }) }),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: [...workspaceKey(organizationID), "role", selectedRole?.id] }); },
+  });
+  const selectRole = (role: Role) => { setSelectedRole(role); setEditedPermissions([]); };
+  const protectedRole = selectedRole?.name.toLowerCase() === "owner";
+  return <section className="grid gap-5 lg:grid-cols-2">
+    <section className="rounded-lg border bg-card p-5" aria-labelledby="create-role-heading">
+      <h2 id="create-role-heading" className="text-lg font-semibold">Create role</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Choose the capabilities this role should grant in this workspace.</p>
+      <form className="mt-4 grid gap-3" onSubmit={(event: FormEvent) => { event.preventDefault(); create.mutate(); }}>
+        <label className="text-sm font-medium">Role name<input className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} placeholder="Content editor" /></label>
+        <PermissionEditor catalog={catalog} selected={newPermissions} onChange={setNewPermissions} disabled={create.isPending} />
+        <button className="w-fit rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50" disabled={create.isPending}>{create.isPending ? "Creating…" : "Create role"}</button>
+      </form>
+      {create.isError && <p role="alert" className="mt-3 text-sm text-destructive">Role creation failed. “owner” and platform administration are reserved.</p>}
+    </section>
+    <section className="rounded-lg border bg-card p-5" aria-labelledby="edit-role-heading">
+      <h2 id="edit-role-heading" className="text-lg font-semibold">Edit role permissions</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Select a role, make your changes, then save them together.</p>
+      <div className="mt-4 flex flex-wrap gap-2" role="list" aria-label="Workspace roles">
+        {roles.map((role) => <button type="button" key={role.id} aria-pressed={selectedRole?.id === role.id} className="rounded-md border px-3 py-1 text-sm aria-pressed:bg-primary aria-pressed:text-primary-foreground" onClick={() => selectRole(role)}>{role.name}{role.name.toLowerCase() === "owner" ? " (protected)" : ""}</button>)}
+      </div>
+      {selectedRole && <div className="mt-4 grid gap-3">
+        <p className="font-medium">{selectedRole.name}</p>
+        {grants.isPending ? <p className="text-sm text-muted-foreground">Loading permissions…</p> : grants.isError ? <p role="alert" className="text-sm text-destructive">Unable to load this role’s permissions.</p> : protectedRole ? <p className="rounded-md bg-muted p-3 text-sm text-muted-foreground">The owner role is protected and cannot be changed.</p> : <>
+          <PermissionEditor catalog={catalog} selected={editedPermissions} onChange={setEditedPermissions} disabled={save.isPending} />
+          <div className="flex items-center gap-3"><button type="button" className="w-fit rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save permissions"}</button>{save.isSuccess && <span className="text-sm text-emerald-700">Saved.</span>}</div>
+          {save.isError && <p role="alert" className="text-sm text-destructive">Permissions could not be saved. Please try again.</p>}
+        </>}
+      </div>}
+    </section>
+  </section>;
+}
+
+export function WorkspaceAdmin({ organizationID, permissions: _permissions }: { organizationID: string; permissions: readonly string[] }) {
+  const client = useQueryClient();
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [roleID, setRoleID] = useState("");
+  const members = useQuery({ queryKey: [...workspaceKey(organizationID), "members"], queryFn: () => request<MembersResponse>(membersPath(organizationID)) });
+  const roles = useQuery({ queryKey: [...workspaceKey(organizationID), "roles"], queryFn: () => request<RolesResponse>(rolesPath(organizationID)) });
+  const catalog = useQuery({ queryKey: [...workspaceKey(organizationID), "permissions"], queryFn: () => request<CatalogResponse>(`/api/v1/organizations/${organizationID}/permissions`) });
+  const refreshMembers = () => client.invalidateQueries({ queryKey: [...workspaceKey(organizationID), "members"] });
+  const addMember = useMutation({
+    mutationFn: () => request<void>(membersPath(organizationID), { method: "POST", body: JSON.stringify({ email: email.trim(), displayName: displayName.trim(), password, roleId: roleID }) }),
+    onSuccess: () => { setEmail(""); setDisplayName(""); setPassword(""); setRoleID(""); void refreshMembers(); },
+  });
+  const assignRole = useMutation({
+    mutationFn: ({ userID, nextRoleID }: { userID: string; nextRoleID: string }) => request<void>(`${membersPath(organizationID)}/${userID}/role`, { method: "PUT", body: JSON.stringify({ roleId: nextRoleID }) }),
+    onSuccess: () => void refreshMembers(),
+  });
+  if (members.isPending || roles.isPending || catalog.isPending) return <main className="p-8">Loading workspace administration…</main>;
+  if (members.isError || roles.isError || catalog.isError) return <main className="p-8" role="alert">Unable to load workspace administration. Confirm you have workspace-administration permission and try again.</main>;
+  return <main className="mx-auto max-w-6xl space-y-8 p-4 sm:p-8">
+    <header><h1 className="text-3xl font-bold tracking-tight">Workspace administration</h1><p className="mt-1 text-muted-foreground">Create tenant roles, set their permissions, and provision teammates for an interactive demo.</p></header>
+    <RolesPanel organizationID={organizationID} roles={roles.data.roles} catalog={catalog.data.permissions} />
+    <section className="rounded-lg border bg-card p-5" aria-labelledby="add-member-heading"><h2 id="add-member-heading" className="text-lg font-semibold">Add member</h2><p className="mt-1 text-sm text-muted-foreground">This creates a login account and assigns its first workspace role.</p><form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); addMember.mutate(); }}><label className="text-sm font-medium">Name<input className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required maxLength={160} /></label><label className="text-sm font-medium">Email<input className="mt-1 w-full rounded-md border bg-background px-3 py-2" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label><label className="text-sm font-medium">Temporary password<input className="mt-1 w-full rounded-md border bg-background px-3 py-2" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={12} /></label><label className="text-sm font-medium">Initial role<select className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={roleID} onChange={(event) => setRoleID(event.target.value)} required><option value="">Select a role</option>{roles.data.roles.filter((role) => role.name.toLowerCase() !== "owner").map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label><button className="w-fit rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50" disabled={addMember.isPending || !roleID}>{addMember.isPending ? "Adding…" : "Add member"}</button></form>{addMember.isError && <p role="alert" className="mt-3 text-sm text-destructive">Member creation failed. The email may already be in use, or the selected role may no longer be available.</p>}{addMember.isSuccess && <p className="mt-3 text-sm text-emerald-700">Member added. They can now sign in with the temporary password.</p>}</section>
+    <section aria-labelledby="members-heading"><div><h2 id="members-heading" className="text-lg font-semibold">Members</h2><p className="mt-1 text-sm text-muted-foreground">Assigning a role adds it to the member; existing roles remain in place.</p></div>{members.data.members.length === 0 ? <p className="mt-4 rounded-lg border border-dashed p-6 text-muted-foreground">No members yet. Create one above to try role-aware access.</p> : <ul className="mt-4 divide-y rounded-lg border bg-card">{members.data.members.map((member) => <li key={member.userId} className="grid gap-3 p-4 md:grid-cols-[1fr_auto]"><div><p className="font-medium">{member.displayName}</p><p className="text-sm text-muted-foreground">{member.email}</p><p className="mt-1 text-sm">{member.roles.map((role) => role.name).join(", ") || "No role"}</p></div><label className="text-sm font-medium">Add role<select aria-label={`Add role for ${member.displayName}`} className="ml-2 rounded-md border bg-background px-2 py-1" defaultValue="" onChange={(event) => { if (event.target.value) { assignRole.mutate({ userID: member.userId, nextRoleID: event.target.value }); event.currentTarget.value = ""; } }} disabled={assignRole.isPending}><option value="">Choose role</option>{roles.data.roles.filter((role) => role.name.toLowerCase() !== "owner" && !member.roles.some((memberRole) => memberRole.id === role.id)).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label></li>)}</ul>}{assignRole.isError && <p role="alert" className="mt-3 text-sm text-destructive">The role could not be assigned. Refresh the member list and try again.</p>}</section>
+  </main>;
+}

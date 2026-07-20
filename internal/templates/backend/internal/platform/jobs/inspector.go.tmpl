@@ -1,0 +1,43 @@
+package jobs
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/google/uuid"
+)
+
+// Snapshot returns a bounded operational view. It intentionally omits payloads
+// and idempotency keys because they may contain sensitive application data.
+func (s *SQLStore) Snapshot(ctx context.Context, limit int) (Snapshot, error) {
+	if limit < 1 || limit > 100 { limit = 25 }
+	result := Snapshot{Counts: map[string]int64{}, Recent: make([]Record, 0, limit)}
+	rows, err := s.db.QueryContext(ctx, "SELECT state, COUNT(*) FROM jobs GROUP BY state")
+	if err != nil { return result, fmt.Errorf("count jobs: %w", err) }
+	defer rows.Close()
+	for rows.Next() { var state string; var count int64; if err := rows.Scan(&state, &count); err != nil { return result, fmt.Errorf("scan job count: %w", err) }; result.Counts[state] = count }
+	if err := rows.Err(); err != nil { return result, fmt.Errorf("iterate job counts: %w", err) }
+	rows, err = s.db.QueryContext(ctx, "SELECT id, name, state, run_at, attempts, max_attempts, lease_until, created_at FROM jobs ORDER BY created_at DESC LIMIT {{if eq .Database "postgres"}}$1{{else}}?{{end}}", limit)
+	if err != nil { return result, fmt.Errorf("list jobs: %w", err) }
+	defer rows.Close()
+	for rows.Next() {
+		var rawID any; var record Record; var attempts, maxAttempts int64; var lease sql.NullTime
+		if err := rows.Scan(&rawID, &record.Name, &record.State, &record.RunAt, &attempts, &maxAttempts, &lease, &record.CreatedAt); err != nil { return result, fmt.Errorf("scan job: %w", err) }
+		id, err := displayID(rawID); if err != nil { return result, err }
+		record.ID, record.Attempts, record.MaxAttempts = id, uint16(attempts), uint16(maxAttempts)
+		if lease.Valid { value := lease.Time; record.LeaseUntil = &value }
+		result.Recent = append(result.Recent, record)
+	}
+	if err := rows.Err(); err != nil { return result, fmt.Errorf("iterate jobs: %w", err) }
+	return result, nil
+}
+
+func displayID(value any) (string, error) {
+	switch id := value.(type) {
+	case string: return id, nil
+	case []byte: parsed, err := uuid.FromBytes(id); if err != nil { return "", fmt.Errorf("decode job id: %w", err) }; return parsed.String(), nil
+	case uuid.UUID: return id.String(), nil
+	default: return "", fmt.Errorf("unsupported job id type %T", value)
+	}
+}

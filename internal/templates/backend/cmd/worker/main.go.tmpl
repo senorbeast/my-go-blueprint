@@ -10,26 +10,50 @@ import (
 	"{{.Module}}/backend/internal/platform/config"
 	"{{.Module}}/backend/internal/platform/database"
 	"{{.Module}}/backend/internal/platform/jobs"
+	{{if .Email}}
+	emailjobs "{{.Module}}/backend/internal/features/email/adapters/jobs"
+	emaillog "{{.Module}}/backend/internal/features/email/adapters/log"
+	{{end}}
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	cfg, err := config.Load()
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	db, err := database.Open(ctx, cfg.DatabaseURL)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer db.Close() //nolint:errcheck
 	registry := jobs.NewRegistry()
-	worker := jobs.NewWorker(jobs.NewSQLStore(db.SQL()), registry, 30*time.Second)
+	if err := registry.Register(jobs.DemoHeartbeatName, jobs.NewDemoHeartbeatHandler(log.Default())); err != nil {
+		log.Fatal(err)
+	}
+	{{if .Email}}
+	if err := registry.Register(emailjobs.DeliveryName, emailjobs.NewHandler(emaillog.New(log.Default()))); err != nil {
+		log.Fatal(err)
+	}
+	{{end}}
+	queue, err := jobs.Open(ctx, cfg.QueueDriver, cfg.RabbitMQURL, db.SQL())
+	if err != nil { log.Fatal(err) }
+	if closer, ok := queue.(jobs.Closer); ok {
+		defer closer.Close() //nolint:errcheck
+	}
+	worker := jobs.NewWorker(queue, registry, 30*time.Second)
 	log.Printf("worker ready with %d registered handlers", registry.Count())
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
 		select {
-		case <-ctx.Done(): return
+		case <-ctx.Done():
+			return
 		case <-tick.C:
-			if _, err := worker.RunOnce(ctx); err != nil { log.Printf("run job: %v", err) }
+			if _, err := worker.RunOnce(ctx); err != nil {
+				log.Printf("run job: %v", err)
+			}
 		}
 	}
 }
